@@ -37,7 +37,13 @@
 - 배송/운송 상태
 - 외부 추천/검색 서비스 연동
 - 광범위한 백오피스 기능
-- ERD 전체 도메인 구현
+- Phase 1에서 ERD 전체 도메인을 모두 구현하는 것
+
+### ERD 보존 원칙
+
+- Phase 1 구현 범위는 좁게 유지하되, ERD 자체는 미래 확장과 원본 도메인 맥락을 반영해 더 넓게 보존할 수 있다.
+- 즉, `구현 제외`와 `ERD 제거`는 같은 의미로 보지 않는다.
+- Articles, Inquiries, Coupons, Coins, Favorites, External Users, Citizen verification, section, channel 구조는 Phase 1 구현 대상은 아닐 수 있지만 ERD 보존 대상이 될 수 있다.
 
 ## 4. 권장 아키텍처
 
