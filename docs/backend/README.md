@@ -34,6 +34,9 @@ npm run build
 npm run db:generate
 npm run db:migrate:dev
 npm run db:migrate
+npm run db:seed
+npm run db:reset:test
+npm run db:assert:fixtures
 ```
 
 ## Database contract (Phase 1)
@@ -48,6 +51,19 @@ npm run db:migrate
 ```bash
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/mwa_backend?schema=public"
 ```
+
+실제 로컬 도커 PostgreSQL(`monitoring/docker-compose.yml`)과 맞추려면 아래 값을 사용한다:
+
+```bash
+DATABASE_URL="postgresql://mwa:mwa@localhost:5432/mwa?schema=public"
+```
+
+### Deterministic fixture contract (T4)
+
+- Fixture key catalog: `apps/backend/prisma/seed-data.js`
+- Seed entry: `apps/backend/prisma/seed.js`
+- Reusable factories: `apps/backend/prisma/factories.js`
+- Fixture assertion script: `apps/backend/test/fixtures/assert-deterministic-seed.js`
 
 ### Scope boundary
 

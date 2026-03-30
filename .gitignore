@@ -9,3 +9,6 @@ data/loki/
 
 # monitoring/ 기준 compose 시 ./data 가 monitoring/data 로 생성됨
 monitoring/data/
+
+# local planning / agent artifacts
+.sisyphus/
