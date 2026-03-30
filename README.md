@@ -7,7 +7,7 @@ T1 baseline provides a NestJS + TypeScript backend skeleton.
 - Stack: `NestJS + Typia(type contracts) + MikroORM`
 - Fixed port: `8080`
 - Health endpoint: `GET /health`
-- Standard scripts: `dev`, `build`, `start`, `test`, `typecheck`
+- Standard scripts: `dev`, `build`, `start`, `lint`, `format`, `test`, `typecheck`
 
 ### Run locally
 

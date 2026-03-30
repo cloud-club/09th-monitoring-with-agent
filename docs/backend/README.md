@@ -27,12 +27,22 @@ Metrics endpoint returns Prometheus text format and includes `mwa_http_requests_
 cd apps/backend
 npm install
 npm run dev
+npm run lint
+npm run format:check
 npm run test
 npm run typecheck
 npm run build
 npm run db:migrate:dev
 npm run db:migrate
 ```
+
+## Lint / Formatter
+
+- ESLint: `apps/backend/eslint.config.mjs` (`@ryoppippi/eslint-config` 기반)
+- Type-aware lint project: `apps/backend/tsconfig.eslint.json`
+- Prettier: `apps/backend/prettier.config.mjs`
+- Auto-fix: `npm run lint:fix`
+- Auto-format: `npm run format` (`.ts`는 ESLint fix, `json/mjs`는 Prettier)
 
 ## Database contract (Phase 1)
 
