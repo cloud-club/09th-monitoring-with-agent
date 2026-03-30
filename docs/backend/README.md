@@ -34,7 +34,7 @@ npm run db:migrate
 ## Database contract (Phase 1)
 
 - Provider: PostgreSQL
-- Prisma schema: `apps/backend/prisma/schema.prisma`
+- Prisma schema files: `apps/backend/prisma/*.prisma`
 - Migration directory: `apps/backend/prisma/migrations`
 - Required env: `DATABASE_URL`
 
@@ -53,3 +53,14 @@ Phase 1 migration includes core runtime domains only:
 - Monitoring: `api_request_logs`, `monitoring_events`, `alert_records`
 
 ERD-preserved-only domains (`articles`, `inquiries`, `coupons`, `coins`, `favorites`, complex actor/systematic domains) are intentionally excluded from this migration boundary.
+
+### Domain-based Prisma layout
+
+`docs/planning/erd/` 문서 구조를 따라 도메인별로 분리한다.
+
+- `apps/backend/prisma/00-base.prisma`: generator/datasource/enum
+- `apps/backend/prisma/03-actors.prisma`: customers, addresses
+- `apps/backend/prisma/04-sales.prisma`: sales, snapshots, units, stocks
+- `apps/backend/prisma/05-carts.prisma`: carts, cart_items, cart_item_stocks, choices
+- `apps/backend/prisma/06-orders.prisma`: orders, order_items, order_payments, payment_attempts
+- `apps/backend/prisma/11-monitoring.prisma`: monitoring_events, api_request_logs, alert_records
