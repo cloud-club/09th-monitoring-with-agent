@@ -6,15 +6,17 @@ name: mwa
 # 앱 로그(stdout vs 파일) 합치는 법 → README「애플리케이션 로그 연동」
 
 services:
-  mwa-web:
-    build: ./demo
-    container_name: mwa-web
+  mwa-backend:
+    build:
+      context: ..
+      dockerfile: apps/backend/Dockerfile
+    container_name: mwa-backend
     environment:
       - DATABASE_URL=postgresql://mwa:mwa@postgres:5432/mwa?schema=public
     ports:
       - "8080:8080"
     volumes:
-      - ./data/mwa-logs:/app/logs
+      - ./data/backend-logs:/app/logs
     restart: unless-stopped
     depends_on:
       postgres:
@@ -88,8 +90,7 @@ services:
     container_name: mwa-promtail
     image: grafana/promtail:2.9.8
     volumes:
-      # 앱이 파일로 남긴 로그(프로젝트 ./data) → promtail-config 의 mwa-app-files job
-      - ./data/mwa-logs:/var/mwa-app-logs:ro
+      - ./data/backend-logs:/var/backend-logs:ro
       # 호스트 OS·데몬 로그 → host-files job (맥/EC2 의 /var/log)
       - /var/log:/var/log:ro
       # Docker API — 컨테이너 stdout/stderr 스트림을 읽기 위한 통로 (로그 파일 아님) → docker job
