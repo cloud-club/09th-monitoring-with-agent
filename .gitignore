@@ -1,0 +1,11 @@
+node_modules/
+.env
+*.log
+
+# 앱 파일 로그(프로젝트 안에만 생성)
+data/mwa-logs/
+# Loki 청크·인덱스(로컬 바인드 마운트)
+data/loki/
+
+# monitoring/ 기준 compose 시 ./data 가 monitoring/data 로 생성됨
+monitoring/data/
