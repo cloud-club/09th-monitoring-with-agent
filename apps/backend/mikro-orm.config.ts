@@ -1,3 +1,3 @@
-import mikroOrmConfig from './src/database/mikro-orm.config'
+import mikroOrmConfig from './src/database/mikro-orm.config';
 
-export default mikroOrmConfig
+export default mikroOrmConfig;

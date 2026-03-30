@@ -1,16 +1,18 @@
-import { defineConfig } from '@mikro-orm/postgresql'
+import process from 'node:process';
 
-import { RuntimeMarkerEntity } from './entities/runtime-marker.entity'
+import { defineConfig } from '@mikro-orm/postgresql';
+
+import { RuntimeMarkerEntity } from './entities/runtime-marker.entity';
 
 const mikroOrmConfig = defineConfig({
-  clientUrl: process.env.DATABASE_URL,
-  entities: [RuntimeMarkerEntity],
-  entitiesTs: [RuntimeMarkerEntity],
-  migrations: {
-    path: 'dist/migrations',
-    pathTs: 'src/migrations'
-  },
-  connect: false
-})
+	clientUrl: process.env.DATABASE_URL,
+	entities: [RuntimeMarkerEntity],
+	entitiesTs: [RuntimeMarkerEntity],
+	migrations: {
+		path: 'dist/migrations',
+		pathTs: 'src/migrations',
+	},
+	connect: false,
+});
 
-export default mikroOrmConfig
+export default mikroOrmConfig;
