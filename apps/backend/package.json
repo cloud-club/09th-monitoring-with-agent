@@ -11,10 +11,17 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:generate": "prisma generate --schema prisma",
     "db:migrate": "prisma migrate deploy --schema prisma",
-    "db:migrate:dev": "prisma migrate dev --schema prisma"
+    "db:migrate:dev": "prisma migrate dev --schema prisma",
+    "db:seed": "prisma db seed --schema prisma",
+    "db:reset:test": "prisma migrate reset --force --skip-generate --schema prisma",
+    "db:assert:fixtures": "node test/fixtures/assert-deterministic-seed.js"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
+    "dotenv": "^17.2.3",
     "express": "^5.1.0"
   },
   "devDependencies": {

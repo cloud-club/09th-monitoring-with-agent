@@ -1,0 +1,12 @@
+Command: cd apps/backend && npm run db:reset:test && npm run db:reset:test && npm run db:assert:fixtures
+
+Result: PASS
+
+- `db:reset:test` (1st run): migration `20260330193500_init_phase1` reapplied, seed executed.
+- `db:reset:test` (2nd run): migration reapplied again, seed executed with same deterministic fixture baseline.
+- `db:assert:fixtures`: validated fixed fixture IDs/counts and payment success/failure scenario rows.
+
+Verified fixture keys:
+- customers: cust-demo-001, cust-demo-002, cust-seller-001
+- products: prod-notebook, prod-mug, prod-sticker, prod-keyboard, prod-tumbler, prod-hoodie
+- variants: var-notebook-std, var-mug-std, var-sticker-pack, var-keyboard-std, var-tumbler-std, var-hoodie-l
