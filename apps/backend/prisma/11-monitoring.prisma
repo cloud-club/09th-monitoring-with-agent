@@ -1,0 +1,50 @@
+model MonitoringEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  eventName  String   @map("event_name")
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  requestId  String?  @map("request_id")
+  userId     String?  @map("user_id")
+  payload    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([eventName])
+  @@index([entityType, entityId])
+  @@index([requestId])
+  @@map("monitoring_events")
+}
+
+model ApiRequestLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  requestId  String   @unique @map("request_id")
+  customerId String?  @map("customer_id") @db.Uuid
+  method     String
+  endpoint   String
+  statusCode Int      @map("status_code")
+  latencyMs  Int      @map("latency_ms")
+  errorCode  String?  @map("error_code")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  customer Customer? @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+  @@index([method, endpoint])
+  @@index([statusCode])
+  @@map("api_request_logs")
+}
+
+model AlertRecord {
+  id         String        @id @default(uuid()) @db.Uuid
+  alertName  String        @map("alert_name")
+  severity   AlertSeverity
+  status     AlertStatus
+  sourceType String        @map("source_type")
+  sourceRef  String?       @map("source_ref")
+  payload    Json?
+  createdAt  DateTime      @default(now()) @map("created_at")
+  resolvedAt DateTime?     @map("resolved_at")
+
+  @@index([severity, status])
+  @@index([sourceType, sourceRef])
+  @@map("alert_records")
+}

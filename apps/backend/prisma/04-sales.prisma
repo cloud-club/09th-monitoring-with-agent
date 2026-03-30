@@ -1,0 +1,118 @@
+model Sale {
+  id               String    @id @default(uuid()) @db.Uuid
+  sellerCustomerId String    @map("seller_customer_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at")
+  openedAt         DateTime? @map("opened_at")
+  closedAt         DateTime? @map("closed_at")
+  pausedAt         DateTime? @map("paused_at")
+  suspendedAt      DateTime? @map("suspended_at")
+
+  sellerCustomer Customer       @relation("SaleSellerCustomer", fields: [sellerCustomerId], references: [id])
+  snapshots      SaleSnapshot[]
+
+  @@index([sellerCustomerId])
+  @@map("sales")
+}
+
+model SaleSnapshot {
+  id        String   @id @default(uuid()) @db.Uuid
+  saleId    String   @map("sale_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  sale      Sale                  @relation(fields: [saleId], references: [id])
+  contents  SaleSnapshotContent[]
+  tags      SaleSnapshotTag[]
+  units     SaleSnapshotUnit[]
+  cartItems CartItem[]
+
+  @@index([saleId])
+  @@map("sale_snapshots")
+}
+
+model SaleSnapshotContent {
+  id             String  @id @default(uuid()) @db.Uuid
+  saleSnapshotId String  @map("sale_snapshot_id") @db.Uuid
+  title          String
+  format         String
+  body           String
+  revertPolicy   String? @map("revert_policy")
+
+  saleSnapshot SaleSnapshot @relation(fields: [saleSnapshotId], references: [id])
+
+  @@index([saleSnapshotId])
+  @@map("sale_snapshot_contents")
+}
+
+model SaleSnapshotTag {
+  id             String @id @default(uuid()) @db.Uuid
+  saleSnapshotId String @map("sale_snapshot_id") @db.Uuid
+  value          String
+  sequence       Int
+
+  saleSnapshot SaleSnapshot @relation(fields: [saleSnapshotId], references: [id])
+
+  @@index([saleSnapshotId])
+  @@map("sale_snapshot_tags")
+}
+
+model SaleSnapshotUnit {
+  id             String  @id @default(uuid()) @db.Uuid
+  saleSnapshotId String  @map("sale_snapshot_id") @db.Uuid
+  name           String
+  primary        Boolean @default(false)
+  required       Boolean @default(true)
+  sequence       Int
+
+  saleSnapshot   SaleSnapshot             @relation(fields: [saleSnapshotId], references: [id])
+  options        SaleSnapshotUnitOption[]
+  stocks         SaleSnapshotUnitStock[]
+  cartItemStocks CartItemStock[]
+
+  @@index([saleSnapshotId])
+  @@map("sale_snapshot_units")
+}
+
+model SaleSnapshotUnitOption {
+  id                 String  @id @default(uuid()) @db.Uuid
+  saleSnapshotUnitId String  @map("sale_snapshot_unit_id") @db.Uuid
+  name               String
+  type               String
+  variable           Boolean @default(false)
+  sequence           Int
+
+  saleSnapshotUnit     SaleSnapshotUnit                  @relation(fields: [saleSnapshotUnitId], references: [id])
+  candidates           SaleSnapshotUnitOptionCandidate[]
+  cartItemStockChoices CartItemStockChoice[]
+
+  @@index([saleSnapshotUnitId])
+  @@map("sale_snapshot_unit_options")
+}
+
+model SaleSnapshotUnitOptionCandidate {
+  id                       String @id @default(uuid()) @db.Uuid
+  saleSnapshotUnitOptionId String @map("sale_snapshot_unit_option_id") @db.Uuid
+  name                     String
+  sequence                 Int
+
+  saleSnapshotUnitOption SaleSnapshotUnitOption @relation(fields: [saleSnapshotUnitOptionId], references: [id])
+  cartItemStockChoices   CartItemStockChoice[]
+
+  @@index([saleSnapshotUnitOptionId])
+  @@map("sale_snapshot_unit_option_candidates")
+}
+
+model SaleSnapshotUnitStock {
+  id                 String  @id @default(uuid()) @db.Uuid
+  saleSnapshotUnitId String  @map("sale_snapshot_unit_id") @db.Uuid
+  name               String
+  nominalPrice       Decimal @map("nominal_price") @db.Decimal(12, 2)
+  realPrice          Decimal @map("real_price") @db.Decimal(12, 2)
+  quantity           Int
+  sequence           Int
+
+  saleSnapshotUnit SaleSnapshotUnit @relation(fields: [saleSnapshotUnitId], references: [id])
+  cartItemStocks   CartItemStock[]
+
+  @@index([saleSnapshotUnitId])
+  @@map("sale_snapshot_unit_stocks")
+}

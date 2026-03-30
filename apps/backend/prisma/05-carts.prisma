@@ -1,0 +1,69 @@
+model Cart {
+  id         String    @id @default(uuid()) @db.Uuid
+  customerId String    @map("customer_id") @db.Uuid
+  actorType  String    @map("actor_type")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  customer Customer   @relation(fields: [customerId], references: [id])
+  items    CartItem[]
+
+  @@index([customerId])
+  @@map("carts")
+}
+
+model CartItem {
+  id             String    @id @default(uuid()) @db.Uuid
+  cartId         String    @map("cart_id") @db.Uuid
+  saleSnapshotId String    @map("sale_snapshot_id") @db.Uuid
+  volume         Int
+  published      Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  cart         Cart            @relation(fields: [cartId], references: [id])
+  saleSnapshot SaleSnapshot    @relation(fields: [saleSnapshotId], references: [id])
+  stocks       CartItemStock[]
+  orderItem    OrderItem?
+
+  @@index([cartId])
+  @@index([saleSnapshotId])
+  @@map("cart_items")
+}
+
+model CartItemStock {
+  id                      String @id @default(uuid()) @db.Uuid
+  cartItemId              String @map("cart_item_id") @db.Uuid
+  saleSnapshotUnitId      String @map("sale_snapshot_unit_id") @db.Uuid
+  saleSnapshotUnitStockId String @map("sale_snapshot_unit_stock_id") @db.Uuid
+  quantity                Int
+  sequence                Int
+
+  cartItem              CartItem              @relation(fields: [cartItemId], references: [id])
+  saleSnapshotUnit      SaleSnapshotUnit      @relation(fields: [saleSnapshotUnitId], references: [id])
+  saleSnapshotUnitStock SaleSnapshotUnitStock @relation(fields: [saleSnapshotUnitStockId], references: [id])
+  choices               CartItemStockChoice[]
+
+  @@index([cartItemId])
+  @@index([saleSnapshotUnitId])
+  @@index([saleSnapshotUnitStockId])
+  @@map("cart_item_stocks")
+}
+
+model CartItemStockChoice {
+  id                                String @id @default(uuid()) @db.Uuid
+  cartItemStockId                   String @map("cart_item_stock_id") @db.Uuid
+  saleSnapshotUnitOptionId          String @map("sale_snapshot_unit_option_id") @db.Uuid
+  saleSnapshotUnitOptionCandidateId String @map("sale_snapshot_unit_option_candidate_id") @db.Uuid
+  value                             String
+  sequence                          Int
+
+  cartItemStock                   CartItemStock                   @relation(fields: [cartItemStockId], references: [id])
+  saleSnapshotUnitOption          SaleSnapshotUnitOption          @relation(fields: [saleSnapshotUnitOptionId], references: [id])
+  saleSnapshotUnitOptionCandidate SaleSnapshotUnitOptionCandidate @relation(fields: [saleSnapshotUnitOptionCandidateId], references: [id])
+
+  @@index([cartItemStockId])
+  @@index([saleSnapshotUnitOptionId])
+  @@index([saleSnapshotUnitOptionCandidateId])
+  @@map("cart_item_stock_choices")
+}

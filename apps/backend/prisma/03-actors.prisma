@@ -1,0 +1,34 @@
+model Customer {
+  id        String   @id @default(uuid()) @db.Uuid
+  href      String?
+  referrer  String?
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  sales          Sale[]          @relation("SaleSellerCustomer")
+  carts          Cart[]
+  orders         OrderEntity[]
+  apiRequestLogs ApiRequestLog[]
+  orderItems     OrderItem[]
+
+  @@map("customers")
+}
+
+model Address {
+  id          String   @id @default(uuid()) @db.Uuid
+  mobile      String?
+  name        String
+  country     String?
+  province    String?
+  city        String
+  department  String?
+  possession  String?
+  zipCode     String?  @map("zip_code")
+  specialNote String?  @map("special_note")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  orders        OrderEntity[]
+  orderPayments OrderPayment[]
+
+  @@map("addresses")
+}
