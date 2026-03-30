@@ -1,17 +1,17 @@
-import 'reflect-metadata'
+import { NestFactory } from '@nestjs/core';
 
-import { NestFactory } from '@nestjs/core'
+import { AppModule } from './app.module';
 
-import { AppModule } from './app.module'
-import { HttpExceptionFilter } from './http/http-exception.filter'
+import { HttpExceptionFilter } from './http/http-exception.filter';
+import 'reflect-metadata';
 
-const PORT = 8080
+const PORT = 8080;
 
-const bootstrap = async (): Promise<void> => {
-  const app = await NestFactory.create(AppModule)
-  app.useGlobalFilters(new HttpExceptionFilter())
+async function bootstrap(): Promise<void> {
+	const app = await NestFactory.create(AppModule);
+	app.useGlobalFilters(new HttpExceptionFilter());
 
-  await app.listen(PORT)
+	await app.listen(PORT);
 }
 
-void bootstrap()
+void bootstrap();
