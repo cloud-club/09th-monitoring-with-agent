@@ -1,0 +1,86 @@
+name: Document
+description: 문서 작성/수정 전용 이슈
+title: "[Docs] "
+labels:
+  - docs
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 작성 규칙
+        - 내부 문서 경로는 **반드시 `docs/` 하위만** 작성합니다.
+        - 세션성 작업 메모는 이슈 본문의 유지보수 문서로 사용하지 않습니다.
+        - 외부 문서(외부 repo, blog, 공식 docs)는 참고자료 섹션에 작성할 수 있습니다.
+
+  - type: input
+    id: purpose
+    attributes:
+      label: Purpose
+      description: 문서 작업 목적을 간단히 작성해주세요.
+      placeholder: 예) API 계약 문서에 payment 상태 전이 규칙을 반영한다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: target_docs
+    attributes:
+      label: Target Docs (docs/ only)
+      description: 수정/추가 대상 문서를 `docs/` 경로로 작성해주세요.
+      placeholder: |
+        - docs/planning/07-backend-ticket-issues.md
+        - docs/architecture/01-system-architecture.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: references
+    attributes:
+      label: External References (optional)
+      description: 외부 참고문서를 작성하세요.
+      placeholder: |
+        - https://example.com/blog
+        - https://github.com/org/repo/blob/main/docs/spec.md
+    validations:
+      required: false
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: 이번 이슈에서 반영할 문서 변경 범위
+      placeholder: |
+        - 용어/정의 정리
+        - 단계별 실행 가이드 보강
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of Scope
+      description: 이번 이슈에서 제외할 범위
+      placeholder: |
+        - 코드 구현
+        - 인프라 설정 변경
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: 문서 완료 조건
+      placeholder: |
+        - [ ] 대상 문서가 최신 정책과 일치한다.
+        - [ ] 경로/링크가 유효하다.
+        - [ ] 모호한 표현이 제거되었다.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: docs_rule_check
+    attributes:
+      label: Docs Rule Check
+      options:
+        - label: 내부 문서 경로를 모두 `docs/` 하위로만 작성했다.
+          required: true

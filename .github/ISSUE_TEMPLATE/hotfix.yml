@@ -1,0 +1,109 @@
+name: Hotfix
+description: 운영/배포 이슈를 빠르게 수정하는 핫픽스 이슈
+title: "[Hotfix] "
+labels:
+  - hotfix
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 작성 규칙
+        - 내부 문서 경로는 **반드시 `docs/` 하위만** 작성합니다.
+        - 세션성 작업 메모는 이슈 본문의 유지보수 문서로 사용하지 않습니다.
+        - 외부 문서(외부 repo, blog, 공식 docs)는 참고자료 섹션에 작성할 수 있습니다.
+
+  - type: input
+    id: incident
+    attributes:
+      label: Incident / Problem
+      description: 현재 발생 중인 문제를 한 줄로 작성해주세요.
+      placeholder: 예) 주문 생성 API가 특정 조건에서 500을 반환한다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: 영향 범위를 작성해주세요.
+      placeholder: |
+        - 사용자 영향: 주문 불가
+        - 시스템 영향: 에러율 증가
+    validations:
+      required: true
+
+  - type: textarea
+    id: internal_docs
+    attributes:
+      label: Internal Docs (docs/ only)
+      description: 내부 참고 문서를 `docs/` 경로로만 작성해주세요.
+      placeholder: |
+        - docs/planning/02-sli-alert-matrix.md
+        - docs/architecture/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: external_references
+    attributes:
+      label: External References (optional)
+      description: 외부 문서/블로그/공식 문서를 참고자료로 작성하세요.
+      placeholder: |
+        - https://status.vendor.com
+        - https://docs.vendor.com/errors
+    validations:
+      required: false
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: 문제 재현 절차
+      placeholder: |
+        1) ...
+        2) ...
+        3) ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Fix Scope
+      description: 이번 핫픽스에서 수정할 범위
+      placeholder: |
+        - 입력 검증 로직 보강
+        - 트랜잭션 처리 수정
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: 핫픽스 완료 조건
+      placeholder: |
+        - [ ] 재현 시나리오가 더 이상 실패하지 않는다.
+        - [ ] 회귀 테스트가 통과한다.
+        - [ ] 영향 범위 검증을 완료했다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation_commands
+    attributes:
+      label: Validation Commands
+      description: 완료 전 실행할 명령어
+      placeholder: |
+        npm run typecheck
+        npm run test:integration
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: docs_rule_check
+    attributes:
+      label: Docs Rule Check
+      options:
+        - label: 내부 문서 경로를 모두 `docs/` 하위로만 작성했다.
+          required: true
