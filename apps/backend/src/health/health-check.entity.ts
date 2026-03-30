@@ -2,9 +2,9 @@ import { Entity, PrimaryKey, Property } from '@mikro-orm/core'
 
 @Entity({ tableName: 'health_check' })
 export class HealthCheckEntity {
-  @PrimaryKey()
+  @PrimaryKey({ type: 'number' })
   id!: number
 
-  @Property({ defaultRaw: 'CURRENT_TIMESTAMP' })
+  @Property({ type: 'Date', defaultRaw: 'CURRENT_TIMESTAMP' })
   createdAt!: Date
 }

@@ -1,0 +1,35 @@
+name: Backend Live Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_live_base_url:
+        description: 'Base URL for live backend target (e.g., https://api.example.com)'
+        required: true
+        type: string
+
+jobs:
+  backend-live:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run live integration tests
+        env:
+          LIVE_TEST: 'true'
+          BACKEND_LIVE_BASE_URL: ${{ inputs.backend_live_base_url }}
+        run: npm run test:integration:live
