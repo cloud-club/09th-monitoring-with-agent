@@ -27,6 +27,8 @@ cd apps/backend
 npm install
 npm run dev
 npm run test
+npm run test:e2e
+npm run test:integration:live
 npm run typecheck
 npm run build
 npm run db:generate

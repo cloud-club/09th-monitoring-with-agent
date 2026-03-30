@@ -6,7 +6,7 @@ T1 baseline provides an Express + TypeScript backend skeleton.
 
 - Fixed port: `8080`
 - Health endpoint: `GET /health`
-- Standard scripts: `dev`, `build`, `start`, `test`, `typecheck`
+- Standard scripts: `dev`, `build`, `start`, `test`, `test:e2e`, `test:integration:live`, `typecheck`
 
 ### Run locally
 
