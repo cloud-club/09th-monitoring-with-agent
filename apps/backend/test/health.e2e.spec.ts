@@ -1,32 +1,17 @@
-import { Test } from '@nestjs/testing'
-import { type INestApplication } from '@nestjs/common'
-import request from 'supertest'
+import { expect, test } from '@playwright/test'
 
-import { AppModule } from '../src/app.module'
+test.describe('Health endpoint (e2e)', () => {
+  const serverUrl = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:38080'
 
-describe('Health endpoint (e2e)', () => {
-  let app: INestApplication
+  test('GET /health returns configured stack response', async ({ request }) => {
+    const response = await request.get(`${serverUrl}/health`, {
+      params: {
+        backendApiBaseUrl: 'http://localhost:9900/'
+      }
+    })
 
-  beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [AppModule]
-    }).compile()
-
-    app = moduleRef.createNestApplication()
-    await app.init()
-  })
-
-  afterAll(async () => {
-    await app.close()
-  })
-
-  it('GET /health returns configured stack response', async () => {
-    const response = await request(app.getHttpServer())
-      .get('/health')
-      .query({ backendApiBaseUrl: 'http://localhost:9900/' })
-
-    expect(response.status).toBe(200)
-    expect(response.body).toEqual({
+    expect(response.status()).toBe(200)
+    await expect(response.json()).resolves.toEqual({
       success: true,
       data: {
         status: 'ok',
@@ -36,12 +21,15 @@ describe('Health endpoint (e2e)', () => {
     })
   })
 
-  it('GET /health returns 400 for invalid backendApiBaseUrl', async () => {
-    const response = await request(app.getHttpServer())
-      .get('/health')
-      .query({ backendApiBaseUrl: 'invalid-url' })
+  test('GET /health returns 400 for invalid backendApiBaseUrl', async ({ request }) => {
+    const response = await request.get(`${serverUrl}/health`, {
+      params: {
+        backendApiBaseUrl: 'invalid-url'
+      }
+    })
 
-    expect(response.status).toBe(400)
-    expect(response.body.message).toBe('backendApiBaseUrl must be a valid http(s) URL')
+    expect(response.status()).toBe(400)
+    const body = await response.json()
+    expect(body.message).toBe('backendApiBaseUrl must be a valid http(s) URL')
   })
 })
