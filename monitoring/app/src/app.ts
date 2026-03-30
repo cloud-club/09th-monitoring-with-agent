@@ -1,17 +1,6 @@
 import express, { type Request, type Response } from 'express'
 
-import { type BackendHealthSnapshot } from './backend-health'
-
-interface MonitoringAppDependencies {
-  readonly fetchBackendHealth: () => Promise<BackendHealthSnapshot>
-}
-
-interface RenderHomePageParams {
-  readonly backendHealth: BackendHealthSnapshot
-}
-
-export function renderHomePage(params: RenderHomePageParams): string {
-  const { backendHealth } = params
+export function renderHomePage(): string {
 
   return `<!doctype html>
 <html lang="en">
@@ -23,14 +12,13 @@ export function renderHomePage(params: RenderHomePageParams): string {
   <body>
     <main>
       <h1>Monitoring App (SSR baseline)</h1>
-      <p>Backend API source: ${backendHealth.source}</p>
-      <p>Backend API health: ${backendHealth.status}</p>
+      <p>Runtime mode: standalone</p>
     </main>
   </body>
 </html>`
 }
 
-export function createMonitoringApp(dependencies: MonitoringAppDependencies) {
+export function createMonitoringApp() {
   const app = express()
 
   app.use(express.json())
@@ -45,10 +33,8 @@ export function createMonitoringApp(dependencies: MonitoringAppDependencies) {
     })
   })
 
-  app.get('/', async (_request: Request, response: Response) => {
-    const backendHealth = await dependencies.fetchBackendHealth()
-
-    response.status(200).type('html').send(renderHomePage({ backendHealth }))
+  app.get('/', (_request: Request, response: Response) => {
+    response.status(200).type('html').send(renderHomePage())
   })
 
   return app
