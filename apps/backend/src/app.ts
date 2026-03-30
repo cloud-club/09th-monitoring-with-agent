@@ -1,9 +1,27 @@
 import express, { type Request, type Response } from 'express'
 import { Counter, Registry, collectDefaultMetrics } from 'prom-client'
 
+export interface HealthResponse {
+  readonly success: true
+  readonly data: {
+    readonly status: 'ok'
+  }
+}
+
 export const app = express()
 
 const metricsRegistry = new Registry()
+
+export const createHealthResponse = (): HealthResponse => ({
+  success: true,
+  data: {
+    status: 'ok'
+  }
+})
+
+export const resolveMetricPath = (requestPath: string, routePath?: string): string => {
+  return typeof routePath === 'string' ? routePath : requestPath
+}
 
 collectDefaultMetrics({ register: metricsRegistry })
 
@@ -22,7 +40,7 @@ app.use((request, response, next) => {
 
     httpRequestsTotal.inc({
       method: request.method,
-      path: typeof routePath === 'string' ? routePath : request.path,
+      path: resolveMetricPath(request.path, typeof routePath === 'string' ? routePath : undefined),
       status: String(response.statusCode)
     })
   })
@@ -31,12 +49,7 @@ app.use((request, response, next) => {
 })
 
 app.get('/health', (_request: Request, response: Response) => {
-  response.status(200).json({
-    success: true,
-    data: {
-      status: 'ok'
-    }
-  })
+  response.status(200).json(createHealthResponse())
 })
 
 app.get('/metrics', async (_request: Request, response: Response) => {
