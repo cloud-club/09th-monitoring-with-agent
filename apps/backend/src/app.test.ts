@@ -16,3 +16,13 @@ test('GET /health returns ok response', async () => {
     }
   })
 })
+
+test('GET /metrics returns prometheus metrics text', async () => {
+  await request(app).get('/health')
+
+  const response = await request(app).get('/metrics')
+
+  assert.equal(response.status, 200)
+  assert.match(response.headers['content-type'] ?? '', /text\/plain/)
+  assert.match(response.text, /mwa_http_requests_total/)
+})

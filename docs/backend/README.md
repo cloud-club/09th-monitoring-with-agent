@@ -6,6 +6,7 @@
 
 - Port: `8080` (fixed)
 - Health endpoint: `GET /health`
+- Metrics endpoint: `GET /metrics`
 - Health response:
 
 ```json
@@ -16,6 +17,8 @@
   }
 }
 ```
+
+Metrics endpoint returns Prometheus text format and includes `mwa_http_requests_total`.
 
 ## Commands
 
