@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const express = require("express");
 const morgan = require("morgan");
 const client = require("prom-client");
+const { prisma, isPrismaEnabled } = require("./prisma-client");
 
 const PORT = process.env.PORT || 8080;
 const LOG_DIR = process.env.LOG_DIR || "/app/logs";
@@ -225,8 +226,18 @@ app.get("/metrics", async (_req, res) => {
   res.end(await register.metrics());
 });
 
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+app.get("/health", async (_req, res) => {
+  if (!isPrismaEnabled) {
+    res.json({ ok: true, db: "disabled" });
+    return;
+  }
+
+  try {
+    await prisma.$queryRaw`SELECT 1 FROM "_prisma_migrations" LIMIT 1`;
+    res.json({ ok: true, db: "up" });
+  } catch (error) {
+    res.status(503).json({ ok: false, db: "down", message: "database unavailable" });
+  }
 });
 
 app.listen(PORT, "0.0.0.0", () => {
