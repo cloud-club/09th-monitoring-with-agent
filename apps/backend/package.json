@@ -2,27 +2,33 @@
   "name": "@mwa/backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Phase 1 backend baseline (Express + TypeScript)",
+  "description": "Phase 1 backend baseline (NestJS + TypeScript)",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "dev": "tsx watch src/main.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "start": "node dist/main.js",
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "db:generate": "prisma generate --schema prisma",
-    "db:migrate": "prisma migrate deploy --schema prisma",
-    "db:migrate:dev": "prisma migrate dev --schema prisma"
+    "db:migrate": "mikro-orm migration:up",
+    "db:migrate:dev": "mikro-orm migration:create"
   },
   "dependencies": {
-    "@prisma/client": "^6.5.0",
-    "express": "^5.1.0",
-    "zod": "^4.1.12"
+    "@mikro-orm/core": "^6.5.9",
+    "@mikro-orm/migrations": "^6.5.9",
+    "@mikro-orm/nestjs": "^6.1.1",
+    "@mikro-orm/postgresql": "^6.5.9",
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/core": "^11.1.6",
+    "@nestjs/platform-express": "^11.1.6",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typia": "^9.7.2"
   },
   "devDependencies": {
-    "@types/express": "^5.0.3",
+    "@mikro-orm/cli": "^6.5.9",
+    "@nestjs/testing": "^11.1.6",
     "@types/node": "^24.6.0",
     "@types/supertest": "^6.0.3",
-    "prisma": "^6.5.0",
     "supertest": "^7.1.4",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"

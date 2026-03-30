@@ -1,13 +1,39 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { after, before, test } from 'node:test'
+
+import type { INestApplication } from '@nestjs/common'
+import { Test } from '@nestjs/testing'
 
 import request from 'supertest'
 
-import { app } from './app'
 import { ERROR_CODES } from './http/error-codes'
+import { HttpExceptionFilter } from './http/http-exception.filter'
+
+let app: INestApplication
+
+before(async () => {
+  process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/mwa_backend'
+
+  const { AppModule } = await import('./app.module')
+
+  const testingModule = await Test.createTestingModule({
+    imports: [AppModule]
+  }).compile()
+
+  app = testingModule.createNestApplication()
+  app.useGlobalFilters(new HttpExceptionFilter())
+
+  await app.init()
+})
+
+after(async () => {
+  if (app !== undefined) {
+    await app.close()
+  }
+})
 
 test('GET /health returns ok response', async () => {
-  const response = await request(app).get('/health')
+  const response = await request(app.getHttpServer()).get('/health')
 
   assert.equal(response.status, 200)
   assert.deepEqual(response.body, {
@@ -19,7 +45,7 @@ test('GET /health returns ok response', async () => {
 })
 
 test('GET /contract/pagination applies pagination defaults', async () => {
-  const response = await request(app).get('/contract/pagination')
+  const response = await request(app.getHttpServer()).get('/contract/pagination')
 
   assert.equal(response.status, 200)
   assert.deepEqual(response.body, {
@@ -38,7 +64,7 @@ test('GET /contract/pagination applies pagination defaults', async () => {
 })
 
 test('GET /contract/pagination returns validation error on invalid query', async () => {
-  const response = await request(app).get('/contract/pagination?page=0')
+  const response = await request(app.getHttpServer()).get('/contract/pagination?page=0')
 
   assert.equal(response.status, 400)
   assert.equal(response.body.success, false)
@@ -48,7 +74,7 @@ test('GET /contract/pagination returns validation error on invalid query', async
 })
 
 test('GET /contract/pagination rejects over max limit', async () => {
-  const response = await request(app).get('/contract/pagination?limit=101')
+  const response = await request(app.getHttpServer()).get('/contract/pagination?limit=101')
 
   assert.equal(response.status, 400)
   assert.equal(response.body.success, false)
@@ -56,7 +82,7 @@ test('GET /contract/pagination rejects over max limit', async () => {
 })
 
 test('GET /contract/pagination rejects empty-string page value', async () => {
-  const response = await request(app).get('/contract/pagination?page=')
+  const response = await request(app.getHttpServer()).get('/contract/pagination?page=')
 
   assert.equal(response.status, 400)
   assert.equal(response.body.success, false)
@@ -64,7 +90,7 @@ test('GET /contract/pagination rejects empty-string page value', async () => {
 })
 
 test('GET /contract/bad-request returns fixed bad request envelope', async () => {
-  const response = await request(app).get('/contract/bad-request')
+  const response = await request(app.getHttpServer()).get('/contract/bad-request')
 
   assert.equal(response.status, 400)
   assert.deepEqual(response.body, {
@@ -77,7 +103,7 @@ test('GET /contract/bad-request returns fixed bad request envelope', async () =>
 })
 
 test('GET /contract/error returns fixed internal server error envelope', async () => {
-  const response = await request(app).get('/contract/error')
+  const response = await request(app.getHttpServer()).get('/contract/error')
 
   assert.equal(response.status, 500)
   assert.deepEqual(response.body, {
@@ -90,7 +116,7 @@ test('GET /contract/error returns fixed internal server error envelope', async (
 })
 
 test('GET /unknown route returns fixed not-found envelope', async () => {
-  const response = await request(app).get('/unknown')
+  const response = await request(app.getHttpServer()).get('/unknown')
 
   assert.equal(response.status, 404)
   assert.deepEqual(response.body, {

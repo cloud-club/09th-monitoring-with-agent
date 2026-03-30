@@ -2,8 +2,9 @@
 
 ## Backend workspace (`apps/backend`)
 
-T1 baseline provides an Express + TypeScript backend skeleton.
+T1 baseline provides a NestJS + TypeScript backend skeleton.
 
+- Stack: `NestJS + Typia(type contracts) + MikroORM`
 - Fixed port: `8080`
 - Health endpoint: `GET /health`
 - Standard scripts: `dev`, `build`, `start`, `test`, `typecheck`
