@@ -3,7 +3,6 @@ import { after, before, test } from 'node:test'
 
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-
 import request from 'supertest'
 
 import { ERROR_CODES } from './http/error-codes'
@@ -42,6 +41,16 @@ test('GET /health returns ok response', async () => {
       status: 'ok'
     }
   })
+})
+
+test('GET /metrics returns prometheus metrics text', async () => {
+  await request(app.getHttpServer()).get('/health')
+
+  const response = await request(app.getHttpServer()).get('/metrics')
+
+  assert.equal(response.status, 200)
+  assert.match(response.headers['content-type'] ?? '', /text\/plain/)
+  assert.match(response.text, /mwa_http_requests_total/)
 })
 
 test('GET /contract/pagination applies pagination defaults', async () => {

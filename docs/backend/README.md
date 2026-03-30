@@ -7,6 +7,7 @@
 - Port: `8080` (fixed)
 - Health endpoint: `GET /health`
 - Shared HTTP contract + validation + error envelope: `docs/backend/http-contract.md`
+- Metrics endpoint: `GET /metrics`
 - Health response:
 
 ```json
@@ -17,6 +18,8 @@
   }
 }
 ```
+
+Metrics endpoint returns Prometheus text format and includes `mwa_http_requests_total`.
 
 ## Commands
 
