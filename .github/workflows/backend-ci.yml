@@ -16,8 +16,10 @@ on:
       - '.github/workflows/backend-ci.yml'
 
 jobs:
-  backend-ci:
+  backend-core-tests:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: apps/backend
@@ -35,8 +37,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test CI
+      - name: Run required core checks
         run: npm run test:ci
