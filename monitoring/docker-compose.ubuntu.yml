@@ -1,0 +1,14 @@
+services:
+  cadvisor:
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - --housekeeping_interval=15s
+      - --containerd=/run/containerd/containerd.sock
+      - --containerd-namespace=moby

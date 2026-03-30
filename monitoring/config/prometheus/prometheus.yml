@@ -1,0 +1,56 @@
+# Prometheus가 "어디서" 메트릭을 긁어올지 정의
+# 모든 타깃은 docker-compose의 loki 네트워크 안에서 서비스 이름으로 접근합니다.
+#
+# EC2 퍼블릭 IP로 브라우저에서 볼 때:
+#   - Grafana   http://<EC2_IP>:3000
+#   - Prometheus http://<EC2_IP>:9090
+#   - MWA 데모 웹 http://<EC2_IP>:8080
+# 보안 그룹: 학습용으론 위 포트를 열어도 되지만, 운영에선 9090·3100·9100 은 퍼블릭에 두지 않는 편이 좋음.
+#   - 9090 Prometheus: 수집한 메트릭·타깃 정보가 그대로 노출(기본 인증 없음) → 인프라 정찰에 유리.
+#   - 3100 Loki: 로그 조회·푸시 API → 민감 로그 유출·악용 위험.
+#   - 9100 node_exporter: 호스트 CPU·메모리·디스크·프로세스 등 상세 노출 → 서버 내부 정보 유출.
+#   - 8088 cAdvisor: 컨테이너별 리소스·이름 노출 → 학습용만 퍼블릭에 두는 것 권장.
+# VPN·bastion·사설망·본인 IP만 허용 등으로 제한하고, 대시보드는 보통 3000(Grafana)만 제한적으로 연다.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # cAdvisor 응답이 크고 느릴 수 있어 타임아웃·간격을 넉넉히(스크랩 실패 시 Targets 에 DOWN)
+  - job_name: cadvisor
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          # 인스턴스 구분용
+          instance: ec2-mwa
+
+  # Prometheus 자기 자신
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # MWA 데모 웹(Express). npm 패키지 prom-client 가 카운터 등을 모아
+  #   GET http://mwa-web:8080/metrics
+  # 에 Prometheus 형식 텍스트로 내려줌 → Prometheus 가 주기적으로 이 URL을 긁음(scrape).
+  - job_name: mwa-web
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mwa-web:8080"]
+        labels:
+          app: mwa
+
+  # Docker 밖 호스트에서 뜬 앱(예: systemd로 직접 실행)을 스크랩할 때:
+  # 1) 호스트에서 메트릭 포트 열기
+  # 2) 아래 주석 해제 후 포트 맞추기 (linux EC2에서 host.docker.internal 은 compose extra_hosts 사용)
+  # - job_name: host-process
+  #   static_configs:
+  #     - targets: ["host.docker.internal:9091"]
+  #       labels:
+  #         app: my-binary

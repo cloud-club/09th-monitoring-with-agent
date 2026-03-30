@@ -1,0 +1,45 @@
+# Push 대상 = compose 서비스 이름 loki
+# stdout vs 파일 연동 가이드: README「애플리케이션 로그 연동」
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # (선택) 맥/EC2 의 /var/log 를 compose 로 promtail 컨테이너에 마운트했을 때만 의미 있음.
+  # Promtail 이 보는 경로는 "컨테이너 안" /var/log 이고, 내용은 호스트 /var/log 와 동일.
+  - job_name: host-files
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: host
+          __path__: /var/log/**/*.log
+
+  # B. 파일 로그: compose 가 ./data/mwa-logs 를 여기 /var/mwa-app-logs 로 마운트
+  - job_name: mwa-app-files
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: mwa-web-file
+          service_name: mwa-web
+          __path__: /var/mwa-app-logs/*.log
+
+  # A. stdout/stderr: docker.sock → 컨테이너 로그 전체 (고권한, 일반적인 단일 호스트 패턴)
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container
+      - source_labels: [__meta_docker_container_log_stream]
+        target_label: stream
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: compose_service
