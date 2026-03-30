@@ -6,6 +6,7 @@
 
 - Port: `8080` (fixed)
 - Health endpoint: `GET /health`
+- Shared HTTP contract + validation + error envelope: `docs/backend/http-contract.md`
 - Health response:
 
 ```json
