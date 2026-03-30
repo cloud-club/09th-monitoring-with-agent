@@ -1,9 +1,9 @@
 import { BadRequestException } from '@nestjs/common'
 
-import { HealthController } from '../src/health/health.controller'
-import { HealthService } from '../src/health/health.service'
+import { HealthController } from './health.controller'
+import { HealthService } from './health.service'
 
-describe('HealthController integration', () => {
+describe('Health API integration', () => {
   it('connects controller and service behavior for health response', () => {
     const service = new HealthService()
     const controller = new HealthController(service)
