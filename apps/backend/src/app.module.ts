@@ -5,15 +5,18 @@ import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
 import { PaginationQueryPipe } from './http/pipes/pagination-query.pipe';
 import { HttpMetricsMiddleware } from './metrics/http-metrics.middleware';
+import { BuyerAccessGuard } from './request-context/buyer-access.guard';
+import { RequestContextController } from './request-context/request-context.controller';
+import { RequestContextMiddleware } from './request-context/request-context.middleware';
 
 @Module({
 	imports: [DatabaseModule],
-	controllers: [HealthController, ContractController],
-	providers: [PaginationQueryPipe],
+	controllers: [HealthController, ContractController, RequestContextController],
+	providers: [PaginationQueryPipe, BuyerAccessGuard],
 })
 export class AppModule implements NestModule {
 	public configure(consumer: MiddlewareConsumer): void {
-		consumer.apply(HttpMetricsMiddleware).forRoutes({
+		consumer.apply(RequestContextMiddleware, HttpMetricsMiddleware).forRoutes({
 			path: '*',
 			method: RequestMethod.ALL,
 		});
