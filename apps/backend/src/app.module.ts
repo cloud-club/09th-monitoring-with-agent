@@ -1,5 +1,6 @@
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
 
+import { CatalogModule } from './catalog/catalog.module';
 import { ContractController } from './contract/contract.controller';
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
@@ -7,7 +8,7 @@ import { PaginationQueryPipe } from './http/pipes/pagination-query.pipe';
 import { HttpMetricsMiddleware } from './metrics/http-metrics.middleware';
 
 @Module({
-	imports: [DatabaseModule],
+	imports: [DatabaseModule, CatalogModule],
 	controllers: [HealthController, ContractController],
 	providers: [PaginationQueryPipe],
 })

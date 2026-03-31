@@ -1,0 +1,52 @@
+import type { ApiSuccessResponse } from '../http/contracts';
+import type { PaginationQuery } from '../http/pagination';
+import type { CatalogProductDetail, CatalogProductListItem } from './catalog.types';
+
+import { Controller, Get, Inject, Param, Query } from '@nestjs/common';
+
+import { ok } from '../http/contracts';
+import { createPaginationMeta } from '../http/pagination';
+import { PaginationQueryPipe } from '../http/pipes/pagination-query.pipe';
+
+import { parseCatalogSort } from './catalog.query';
+import { CatalogService } from './catalog.service';
+
+type CatalogListResponse = ApiSuccessResponse<
+	{ items: CatalogProductListItem[] },
+	ReturnType<typeof createPaginationMeta>
+>;
+
+type CatalogDetailResponse = ApiSuccessResponse<{ product: CatalogProductDetail }>;
+
+@Controller('/api/catalog')
+export class CatalogController {
+	public constructor(@Inject(CatalogService) private readonly catalogService: CatalogService) {
+		this.listProducts = this.listProducts.bind(this);
+		this.getProduct = this.getProduct.bind(this);
+	}
+
+	@Get('/products')
+	public async listProducts(
+		@Query(PaginationQueryPipe) paginationQuery: PaginationQuery,
+		@Query('sort') sort: string | undefined,
+	): Promise<CatalogListResponse> {
+		const result = await this.catalogService.listProducts({
+			...paginationQuery,
+			sort: parseCatalogSort(sort),
+		});
+
+		return ok(
+			{
+				items: result.items,
+			},
+			createPaginationMeta(paginationQuery, result.total),
+		);
+	}
+
+	@Get('/products/:productId')
+	public async getProduct(@Param('productId') productId: string): Promise<CatalogDetailResponse> {
+		const product = await this.catalogService.getProduct(productId);
+
+		return ok({ product });
+	}
+}
