@@ -8,6 +8,9 @@
 - Health endpoint: `GET /health`
 - Shared HTTP contract + validation + error envelope: `docs/backend/http-contract.md`
 - Metrics endpoint: `GET /metrics`
+- Catalog endpoints:
+  - `GET /api/catalog/products?page=1&limit=20&sort=newest|price_asc|price_desc`
+  - `GET /api/catalog/products/:productId`
 - Health response:
 
 ```json
@@ -20,6 +23,8 @@
 ```
 
 Metrics endpoint returns Prometheus text format and includes `mwa_http_requests_total`.
+
+Catalog list/detail responses use `sales.id` as `product_id` and `sale_snapshots.id` as `snapshot_id`. Variant payloads expose `variant_id`, price fields, stock quantity, and explicit `is_available` state without leaking preserved-domain relations.
 
 ## Commands
 
