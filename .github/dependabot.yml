@@ -1,0 +1,125 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /apps/backend
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:10"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 10
+    versioning-strategy: increase-if-necessary
+    labels:
+      - dependencies
+      - backend
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      backend-production:
+        dependency-type: production
+        patterns:
+          - "*"
+      backend-development:
+        dependency-type: development
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /apps/backend
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:20"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - backend
+      - docker
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      backend-docker:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /monitoring/demo
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:30"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    versioning-strategy: increase-if-necessary
+    labels:
+      - dependencies
+      - monitoring
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      monitoring-demo:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /monitoring
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:40"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - monitoring
+      - docker
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      monitoring-docker:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /monitoring/demo
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:50"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - monitoring
+      - docker
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      monitoring-demo-docker:
+        patterns:
+          - "*"
