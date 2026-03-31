@@ -13,9 +13,10 @@ Tests are designed to reduce repeated human review effort, not only to catch bug
 3. Entity/value-object behavior uses real instances; mock only side-effect boundaries.
 4. Integration/E2E focus on high-risk paths first.
 5. Slow or expensive live tests are separated from default local/CI loops.
-6. Core tests must be enforced in CI and block merge when failing.
-7. Flaky tests are treated as defects and either fixed immediately or quarantined.
-8. Coverage is reference data, not a KPI.
+6. Benchmarks use a dedicated k6 lane and never run inside the default `test:ci` path.
+7. Core tests must be enforced in CI and block merge when failing.
+8. Flaky tests are treated as defects and either fixed immediately or quarantined.
+9. Coverage is reference data, not a KPI.
 
 ## Current backend harness mapping
 
@@ -24,6 +25,7 @@ Tests are designed to reduce repeated human review effort, not only to catch bug
 - E2E(API): `npm run test:e2e` -> Playwright API tests `src/**/*.e2e.spec.ts`
 - Live integration (manual): `LIVE_TEST=true BACKEND_LIVE_BASE_URL=<url> npm run test:integration:live` -> Vitest `src/**/*.live.it.spec.ts`
 - Required CI gate: `npm run test:ci`
+- Benchmark lane (manual): `BENCHMARK_BASE_URL=<url> npm run benchmark:api` -> k6 script `benchmarks/api-benchmark.k6.js`
 
 ## LLM-generated test review checklist
 
