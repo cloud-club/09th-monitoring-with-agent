@@ -9,13 +9,33 @@
 
 ## Response Envelope
 
+`meta`는 자유 객체가 아니라, 허용된 메타 슬롯만 담는 구조를 사용한다.
+
+```json
+{
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 0,
+    "totalPages": 1
+  }
+}
+```
+
 ### Success
 
 ```json
 {
   "success": true,
   "data": {},
-  "meta": {}
+  "meta": {
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 0,
+      "totalPages": 1
+    }
+  }
 }
 ```
 
@@ -57,10 +77,12 @@
     "limit": 20
   },
   "meta": {
-    "page": 1,
-    "limit": 20,
-    "total": 0,
-    "totalPages": 1
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 0,
+      "totalPages": 1
+    }
   }
 }
 ```

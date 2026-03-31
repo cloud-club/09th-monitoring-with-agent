@@ -1,8 +1,5 @@
 import type { tags } from 'typia';
 
-import { ERROR_CODES } from './error-codes';
-import { HttpError } from './http-error';
-
 export const PAGINATION_DEFAULTS = {
 	page: 1,
 	limit: 20,
@@ -27,73 +24,22 @@ export type PaginationMeta = {
 	totalPages: number;
 };
 
-function parseQueryNumber(value: unknown): number | undefined {
-	if (value === undefined) {
-		return undefined;
-	}
+export type PaginationResponseMeta = {
+	pagination: PaginationMeta;
+};
 
-	if (typeof value === 'number') {
-		return value;
-	}
-
-	if (typeof value === 'string') {
-		const normalized = value.trim();
-		if (normalized.length === 0) {
-			return Number.NaN;
-		}
-
-		return Number(normalized);
-	}
-
-	return Number.NaN;
-}
-
-function failValidation(message: string, details: unknown): never {
-	throw new HttpError(400, ERROR_CODES.VALIDATION_ERROR, message, details);
-}
-
-export function parsePaginationQuery(query: Record<string, unknown>): PaginationQuery {
-	const pageInput = parseQueryNumber(query.page);
-	const limitInput = parseQueryNumber(query.limit);
-
-	const page = pageInput ?? PAGINATION_DEFAULTS.page;
-	const limit = limitInput ?? PAGINATION_DEFAULTS.limit;
-
-	const issues: Array<{ path: string; message: string; value: unknown }> = [];
-
-	if (!Number.isInteger(page) || page < 1) {
-		issues.push({
-			path: 'page',
-			message: 'page must be an integer greater than or equal to 1',
-			value: query.page,
-		});
-	}
-
-	if (!Number.isInteger(limit) || limit < 1 || limit > PAGINATION_DEFAULTS.maxLimit) {
-		issues.push({
-			path: 'limit',
-			message: `limit must be an integer between 1 and ${PAGINATION_DEFAULTS.maxLimit}`,
-			value: query.limit,
-		});
-	}
-
-	if (issues.length > 0) {
-		failValidation('Request validation failed', { issues });
-	}
-
-	return {
-		page,
-		limit,
-	} as PaginationQuery;
-}
-
-export function createPaginationMeta(query: PaginationQuery, total: number): PaginationMeta {
+export function createPaginationMeta(
+	query: PaginationQuery,
+	total: number,
+): PaginationResponseMeta {
 	const totalPages = Math.max(1, Math.ceil(total / query.limit));
 
 	return {
-		page: query.page,
-		limit: query.limit,
-		total,
-		totalPages,
+		pagination: {
+			page: query.page,
+			limit: query.limit,
+			total,
+			totalPages,
+		},
 	};
 }

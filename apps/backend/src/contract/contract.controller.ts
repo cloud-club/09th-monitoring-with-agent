@@ -1,21 +1,24 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import type { PaginationQuery } from '../http/pagination';
 
+import { Controller, Get, Query } from '@nestjs/common';
 import { ok } from '../http/contracts';
 import { BadRequestError } from '../http/http-error';
-import { createPaginationMeta, parsePaginationQuery } from '../http/pagination';
+import { createPaginationMeta } from '../http/pagination';
+import { PaginationQueryPipe } from '../http/pipes/pagination-query.pipe';
 
+/**
+ * TODO(backlog): Remove these T5 contract routes once real API modules replace the temporary contract surface.
+ */
 @Controller('/contract')
 export class ContractController {
 	@Get('/pagination')
-	public getPagination(@Query() query: Record<string, unknown>) {
-		const parsed = parsePaginationQuery(query);
-
+	public getPagination(@Query(PaginationQueryPipe) query: PaginationQuery) {
 		return ok(
 			{
-				page: parsed.page,
-				limit: parsed.limit,
+				page: query.page,
+				limit: query.limit,
 			},
-			createPaginationMeta(parsed, 0),
+			createPaginationMeta(query, 0),
 		);
 	}
 

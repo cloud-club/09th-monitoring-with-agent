@@ -64,10 +64,33 @@ it('gET /contract/pagination applies pagination defaults', async () => {
 			limit: 20,
 		},
 		meta: {
-			page: 1,
-			limit: 20,
-			total: 0,
-			totalPages: 1,
+			pagination: {
+				page: 1,
+				limit: 20,
+				total: 0,
+				totalPages: 1,
+			},
+		},
+	});
+});
+
+it('gET /contract/pagination coerces numeric query strings through the pipe', async () => {
+	const response = await request(app.getHttpServer()).get('/contract/pagination?page=2&limit=5');
+
+	assert.equal(response.status, 200);
+	assert.deepEqual(response.body, {
+		success: true,
+		data: {
+			page: 2,
+			limit: 5,
+		},
+		meta: {
+			pagination: {
+				page: 2,
+				limit: 5,
+				total: 0,
+				totalPages: 1,
+			},
 		},
 	});
 });

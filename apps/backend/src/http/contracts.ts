@@ -1,9 +1,14 @@
 import type { ErrorCode } from './error-codes';
+import type { PaginationMeta } from './pagination';
 
-export type ApiSuccessResponse<T> = {
+export type ApiResponseMeta = {
+	pagination?: PaginationMeta;
+};
+
+export type ApiSuccessResponse<TData, TMeta extends ApiResponseMeta | undefined = undefined> = {
 	success: true;
-	data: T;
-	meta?: object;
+	data: TData;
+	meta?: TMeta;
 };
 
 export type ApiErrorBody = {
@@ -17,9 +22,19 @@ export type ApiErrorResponse = {
 	error: ApiErrorBody;
 };
 
-export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
+export type ApiResponse<TData, TMeta extends ApiResponseMeta | undefined = undefined>
+	= | ApiSuccessResponse<TData, TMeta>
+		| ApiErrorResponse;
 
-export function ok<T>(data: T, meta?: object): ApiSuccessResponse<T> {
+export function ok<TData>(data: TData): ApiSuccessResponse<TData>;
+export function ok<TData, TMeta extends ApiResponseMeta>(
+	data: TData,
+	meta: TMeta,
+): ApiSuccessResponse<TData, TMeta>;
+export function ok<TData, TMeta extends ApiResponseMeta>(
+	data: TData,
+	meta?: TMeta,
+): ApiSuccessResponse<TData, TMeta> {
 	if (meta === undefined) {
 		return {
 			success: true,
