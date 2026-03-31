@@ -27,7 +27,7 @@ const FIXTURE_IDS = {
 } as const;
 
 const BACKEND_DIRECTORY = path.resolve(__dirname, '../..');
-const DATABASE_URL = 'postgresql://mwa:mwa@localhost:5432/mwa?schema=public';
+const DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://mwa:mwa@localhost:5432/mwa?schema=public';
 
 function runBackendCommand(command: string): void {
 	execFileSync('npm', ['run', command], {

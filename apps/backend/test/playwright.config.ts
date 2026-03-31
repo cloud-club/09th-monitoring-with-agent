@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 const webServerHost = process.env.PLAYWRIGHT_WEB_SERVER_HOST ?? '127.0.0.1'
 const webServerPort = process.env.PLAYWRIGHT_WEB_SERVER_PORT ?? '40123'
-const databaseUrl = 'postgresql://mwa:mwa@localhost:5432/mwa?schema=public'
+const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://mwa:mwa@localhost:5432/mwa?schema=public'
 
 export default defineConfig({
   testDir: '../src',
