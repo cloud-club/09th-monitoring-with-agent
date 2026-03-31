@@ -9,9 +9,10 @@ import { HttpExceptionFilter } from './http/http-exception.filter';
 
 describe('backend integration behavior', () => {
 	let app: INestApplication;
+	const databaseUrl = 'postgresql://mwa:mwa@localhost:5432/mwa?schema=public';
 
 	beforeAll(async () => {
-		process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/mwa_backend';
+		process.env.DATABASE_URL = databaseUrl;
 
 		const { AppModule } = await import('./app.module');
 
