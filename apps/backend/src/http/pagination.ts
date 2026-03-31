@@ -24,7 +24,7 @@ export type PaginationMeta = {
 	totalPages: number;
 };
 
-export type PaginationResponseMeta = {
+type PaginationResponseMeta = {
 	pagination: PaginationMeta;
 };
 

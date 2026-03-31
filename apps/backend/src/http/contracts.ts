@@ -11,30 +11,30 @@ export type ApiErrorBody = {
 	details?: unknown;
 };
 
-export type ApiResponseBase = {
-	success: boolean;
-	data?: unknown;
-	meta?: ApiResponseMeta;
-	error?: ApiErrorBody;
+type ApiResponseBase = {
+	readonly success: boolean;
 };
 
-export type ApiSuccessResponse<TData, TMeta extends ApiResponseMeta | undefined = undefined> = {
+type ApiSuccessResponseWithoutMeta<TData> = {
 	success: true;
 	data: TData;
-	meta?: TMeta;
-	error?: never;
 } & ApiResponseBase;
+
+type ApiSuccessResponseWithMeta<TData, TMeta extends ApiResponseMeta> = {
+	success: true;
+	data: TData;
+	meta: TMeta;
+} & ApiResponseBase;
+
+export type ApiSuccessResponse<TData, TMeta extends ApiResponseMeta | undefined = undefined>
+	= TMeta extends ApiResponseMeta
+		? ApiSuccessResponseWithMeta<TData, TMeta>
+		: ApiSuccessResponseWithoutMeta<TData>;
 
 export type ApiErrorResponse = {
 	success: false;
-	data?: never;
-	meta?: never;
 	error: ApiErrorBody;
 } & ApiResponseBase;
-
-export type ApiResponse<TData, TMeta extends ApiResponseMeta | undefined = undefined>
-	= | ApiSuccessResponse<TData, TMeta>
-		| ApiErrorResponse;
 
 export function ok<TData>(data: TData): ApiSuccessResponse<TData>;
 export function ok<TData, TMeta extends ApiResponseMeta>(
@@ -44,7 +44,7 @@ export function ok<TData, TMeta extends ApiResponseMeta>(
 export function ok<TData, TMeta extends ApiResponseMeta>(
 	data: TData,
 	meta?: TMeta,
-): ApiSuccessResponse<TData, TMeta> {
+): ApiSuccessResponseWithoutMeta<TData> | ApiSuccessResponseWithMeta<TData, TMeta> {
 	if (meta === undefined) {
 		return {
 			success: true,
