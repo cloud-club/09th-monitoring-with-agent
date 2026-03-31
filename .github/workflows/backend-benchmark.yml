@@ -1,0 +1,125 @@
+name: Backend Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Optional PR number to receive/update benchmark comment'
+        required: false
+        type: string
+      benchmark_base_url:
+        description: 'Benchmark target base URL (for example https://api.example.com or http://127.0.0.1:8080)'
+        required: true
+        type: string
+      benchmark_target_vus:
+        description: 'Target virtual users during steady state'
+        required: false
+        default: '10'
+        type: string
+      benchmark_steady_state:
+        description: 'Steady-state duration, for example 30s or 2m'
+        required: false
+        default: '30s'
+        type: string
+
+jobs:
+  backend-benchmark:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: apps/backend
+        run: npm ci
+
+      - name: Setup Grafana k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run backend API benchmark
+        id: run_benchmark
+        continue-on-error: true
+        working-directory: apps/backend
+        env:
+          BENCHMARK_BASE_URL: ${{ inputs.benchmark_base_url }}
+          BENCHMARK_TARGET_VUS: ${{ inputs.benchmark_target_vus }}
+          BENCHMARK_STEADY_STATE: ${{ inputs.benchmark_steady_state }}
+          K6_SUMMARY_EXPORT: benchmarks/results/summary.json
+        run: |
+          mkdir -p benchmarks/results
+          node scripts/run-k6-benchmark.mjs benchmarks/api-benchmark.k6.js
+
+      - name: Format benchmark summary comment
+        if: always()
+        working-directory: apps/backend
+        env:
+          BENCHMARK_BASE_URL: ${{ inputs.benchmark_base_url }}
+          BENCHMARK_TARGET_VUS: ${{ inputs.benchmark_target_vus }}
+          BENCHMARK_STEADY_STATE: ${{ inputs.benchmark_steady_state }}
+        run: node scripts/format-k6-summary.mjs benchmarks/results/summary.json benchmarks/results/comment.md
+
+      - name: Upsert PR benchmark comment
+        if: always() && inputs.pr_number != ''
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          COMMENT_PATH: apps/backend/benchmarks/results/comment.md
+        with:
+          script: |
+            const fs = require('node:fs')
+            const marker = '<!-- backend-benchmark-comment -->'
+            const issue_number = Number(process.env.PR_NUMBER)
+            const body = fs.readFileSync(process.env.COMMENT_PATH, 'utf8')
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100,
+            })
+
+            const existing = comments.find((comment) => comment.body.includes(marker))
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              })
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                body,
+              })
+            }
+
+      - name: Upload benchmark summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-benchmark-summary
+          path: apps/backend/benchmarks/results/summary.json
+
+      - name: Upload benchmark comment artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-benchmark-comment
+          path: apps/backend/benchmarks/results/comment.md
+
+      - name: Fail workflow when benchmark step failed
+        if: always() && steps.run_benchmark.outcome == 'failure'
+        run: exit 1

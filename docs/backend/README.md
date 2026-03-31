@@ -30,6 +30,9 @@ npm run dev
 npm run lint
 npm run format:check
 npm run test
+npm run test:e2e
+npm run test:integration:live
+npm run test:ci
 npm run typecheck
 npm run build
 npm run db:migrate:dev

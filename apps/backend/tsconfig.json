@@ -3,7 +3,7 @@
 		"target": "ES2022",
 		"module": "CommonJS",
 		"moduleResolution": "Node",
-		"rootDir": "src",
+		"rootDir": ".",
 		"outDir": "dist",
 		"strict": true,
 		"experimentalDecorators": true,
@@ -11,7 +11,7 @@
 		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true,
 		"skipLibCheck": true,
-		"types": ["node"]
+		"types": ["node", "vitest/globals"]
 	},
-	"include": ["src"]
+	"include": ["src", "test", "scripts", "mikro-orm.config.ts"]
 }
