@@ -5,22 +5,32 @@ export type ApiResponseMeta = {
 	pagination?: PaginationMeta;
 };
 
-export type ApiSuccessResponse<TData, TMeta extends ApiResponseMeta | undefined = undefined> = {
-	success: true;
-	data: TData;
-	meta?: TMeta;
-};
-
 export type ApiErrorBody = {
 	code: ErrorCode;
 	message: string;
 	details?: unknown;
 };
 
+export type ApiResponseBase = {
+	success: boolean;
+	data?: unknown;
+	meta?: ApiResponseMeta;
+	error?: ApiErrorBody;
+};
+
+export type ApiSuccessResponse<TData, TMeta extends ApiResponseMeta | undefined = undefined> = {
+	success: true;
+	data: TData;
+	meta?: TMeta;
+	error?: never;
+} & ApiResponseBase;
+
 export type ApiErrorResponse = {
 	success: false;
+	data?: never;
+	meta?: never;
 	error: ApiErrorBody;
-};
+} & ApiResponseBase;
 
 export type ApiResponse<TData, TMeta extends ApiResponseMeta | undefined = undefined>
 	= | ApiSuccessResponse<TData, TMeta>
