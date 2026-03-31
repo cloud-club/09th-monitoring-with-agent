@@ -20,6 +20,22 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: mwa
+          POSTGRES_USER: mwa
+          POSTGRES_PASSWORD: mwa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mwa -d mwa"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 6
+    env:
+      DATABASE_URL: postgresql://mwa:mwa@localhost:5432/mwa?schema=public
     defaults:
       run:
         working-directory: apps/backend
