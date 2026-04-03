@@ -5,7 +5,7 @@ const webServerPort = process.env.PLAYWRIGHT_WEB_SERVER_PORT ?? '40123'
 const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://mwa:mwa@localhost:5432/mwa?schema=public'
 
 export default defineConfig({
-  testDir: './test/e2e',
+  testDir: './e2e',
   testMatch: '**/*.e2e.spec.ts',
   fullyParallel: false,
   workers: 1,
