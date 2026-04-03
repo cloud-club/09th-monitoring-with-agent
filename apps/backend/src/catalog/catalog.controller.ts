@@ -1,6 +1,5 @@
-import type { ApiSuccessResponse } from '../http/contracts';
 import type { PaginationQuery } from '../http/pagination';
-import type { CatalogProductDetail, CatalogProductListItem } from './catalog.types';
+import type { CatalogDetailResponse, CatalogListResponse } from './catalog.controller.types';
 
 import { Controller, Get, Inject, Param, Query } from '@nestjs/common';
 
@@ -10,13 +9,6 @@ import { PaginationQueryPipe } from '../http/pipes/pagination-query.pipe';
 
 import { parseCatalogSort } from './catalog.query';
 import { CatalogService } from './catalog.service';
-
-type CatalogListResponse = ApiSuccessResponse<
-	{ items: CatalogProductListItem[] },
-	ReturnType<typeof createPaginationMeta>
->;
-
-type CatalogDetailResponse = ApiSuccessResponse<{ product: CatalogProductDetail }>;
 
 @Controller('/api/catalog')
 export class CatalogController {
