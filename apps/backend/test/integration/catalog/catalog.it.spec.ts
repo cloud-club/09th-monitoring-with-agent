@@ -7,8 +7,8 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { ERROR_CODES } from '../http/error-codes';
-import { HttpExceptionFilter } from '../http/http-exception.filter';
+import { ERROR_CODES } from '../../../src/http/error-codes';
+import { HttpExceptionFilter } from '../../../src/http/http-exception.filter';
 
 const FIXTURE_IDS = {
 	sales: {
@@ -26,7 +26,7 @@ const FIXTURE_IDS = {
 	},
 } as const;
 
-const BACKEND_DIRECTORY = path.resolve(__dirname, '../..');
+const BACKEND_DIRECTORY = path.resolve(__dirname, '../../..');
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://mwa:mwa@localhost:5432/mwa?schema=public';
 
 function runBackendCommand(command: string): void {
@@ -48,7 +48,7 @@ describe('catalog integration behavior', () => {
 		runBackendCommand('db:reset:test');
 		runBackendCommand('db:seed');
 
-		const { AppModule } = await import('../app.module');
+		const { AppModule } = await import('../../../src/app.module');
 
 		const testingModule = await Test.createTestingModule({
 			imports: [AppModule],

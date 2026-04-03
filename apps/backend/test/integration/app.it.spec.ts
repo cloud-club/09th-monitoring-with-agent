@@ -4,8 +4,8 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { ERROR_CODES } from './http/error-codes';
-import { HttpExceptionFilter } from './http/http-exception.filter';
+import { ERROR_CODES } from '../../src/http/error-codes';
+import { HttpExceptionFilter } from '../../src/http/http-exception.filter';
 
 describe('backend integration behavior', () => {
 	let app: INestApplication;
@@ -14,7 +14,7 @@ describe('backend integration behavior', () => {
 	beforeAll(async () => {
 		process.env.DATABASE_URL = databaseUrl;
 
-		const { AppModule } = await import('./app.module');
+		const { AppModule } = await import('../../src/app.module');
 
 		const testingModule = await Test.createTestingModule({
 			imports: [AppModule],
