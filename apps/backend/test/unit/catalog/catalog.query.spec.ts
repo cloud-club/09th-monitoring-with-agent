@@ -1,6 +1,6 @@
-import { BadRequestError } from '../http/http-error';
+import { BadRequestError } from '../../../src/http/http-error';
 
-import { DEFAULT_CATALOG_SORT, parseCatalogSort } from './catalog.query';
+import { DEFAULT_CATALOG_SORT, parseCatalogSort } from '../../../src/catalog/catalog.query';
 
 describe('catalog query parsing', () => {
 	it('uses newest sorting by default', () => {

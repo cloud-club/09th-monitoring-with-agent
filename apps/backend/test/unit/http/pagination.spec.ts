@@ -1,4 +1,4 @@
-import { createPaginationMeta, PAGINATION_DEFAULTS } from './pagination';
+import { createPaginationMeta, PAGINATION_DEFAULTS } from '../../../src/http/pagination';
 
 describe('pagination helpers', () => {
 	it('creates pagination metadata from query and total', () => {
