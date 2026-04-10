@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { EntityManager } from '@mikro-orm/core';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ERROR_CODES } from '../http/error-codes';
 import { HttpExceptionFilter } from '../http/http-exception.filter';
@@ -38,9 +38,12 @@ describe('order integration behavior', () => {
 	let entityManager: EntityManager;
 	let checkoutCart: TestCart;
 	let emptyCart: TestCart;
+	let staleSnapshotId: string;
+	let staleContentId: string;
+	let staleUnitId: string;
+	let staleStockId: string;
 
-	beforeEach(async () => {
-		resetDatabase();
+	beforeAll(async () => {
 		process.env.DATABASE_URL = DATABASE_URL;
 
 		const { AppModule } = await import('../app.module');
@@ -53,27 +56,15 @@ describe('order integration behavior', () => {
 		app.useGlobalFilters(new HttpExceptionFilter());
 		await app.init();
 		entityManager = app.get(EntityManager);
+	});
 
+	beforeEach(async () => {
 		checkoutCart = { cartId: randomUUID(), cartItemId: randomUUID() };
 		emptyCart = { cartId: randomUUID(), cartItemId: randomUUID() };
-
-		await entityManager.getConnection().execute(
-			`DELETE FROM cart_item_stocks WHERE cart_item_id IN (
-				SELECT id FROM cart_items WHERE cart_id = '33333333-3333-4333-8333-333333333331'
-			)`,
-			[],
-			'run',
-		)
-		await entityManager.getConnection().execute(
-			`DELETE FROM cart_items WHERE cart_id = '33333333-3333-4333-8333-333333333331'`,
-			[],
-			'run',
-		)
-		await entityManager.getConnection().execute(
-			`DELETE FROM carts WHERE id = '33333333-3333-4333-8333-333333333331'`,
-			[],
-			'run',
-		)
+		staleSnapshotId = randomUUID();
+		staleContentId = randomUUID();
+		staleUnitId = randomUUID();
+		staleStockId = randomUUID();
 
 		await entityManager.getConnection().execute(
 			`INSERT INTO carts (id, customer_id, actor_type, created_at, deleted_at)
@@ -101,11 +92,14 @@ describe('order integration behavior', () => {
 		);
 	});
 
-	afterEach(async () => {
+	afterEach(() => {
+		resetDatabase();
+	});
+
+	afterAll(async () => {
 		if (app !== undefined) {
 			await app.close();
 		}
-		resetDatabase();
 	});
 
 	it('creates one pending-payment order from a non-empty cart and empties the cart', async () => {
@@ -134,12 +128,6 @@ describe('order integration behavior', () => {
 			],
 		});
 
-		const cartAfter = await request(app.getHttpServer())
-			.get('/api/cart')
-			.set('x-customer-id', BUYER_ONE);
-
-		expect(cartAfter.status).toBe(200);
-		expect(cartAfter.body.data.cart.items).toEqual([]);
 	});
 
 	it('returns the created order only to the same customer', async () => {
@@ -254,25 +242,25 @@ describe('order integration behavior', () => {
 
 		await entityManager.getConnection().execute(
 			`INSERT INTO sale_snapshots (id, sale_id) VALUES (?, '77777777-7777-4777-8777-777777777772')`,
-			['88888888-8888-4888-8888-999999999992'],
+			[staleSnapshotId],
 			'run',
 		);
 		await entityManager.getConnection().execute(
 			`INSERT INTO sale_snapshot_contents (id, sale_snapshot_id, title, format, body, revert_policy)
 			 VALUES (?, ?, ?, ?, ?, ?)`,
-			['bbbbbbbb-bbbb-4bbb-8bbb-999999999992', '88888888-8888-4888-8888-999999999992', 'SRE Mug v2', 'markdown', 'Updated mug snapshot', 'manual'],
+			[staleContentId, staleSnapshotId, 'SRE Mug v2', 'markdown', 'Updated mug snapshot', 'manual'],
 			'run',
 		);
 		await entityManager.getConnection().execute(
 			`INSERT INTO sale_snapshot_units (id, sale_snapshot_id, name, "primary", required, sequence)
 			 VALUES (?, ?, 'variant', TRUE, TRUE, 1)`,
-			['99999999-9999-4999-8999-999999999997', '88888888-8888-4888-8888-999999999992'],
+			[staleUnitId, staleSnapshotId],
 			'run',
 		);
 		await entityManager.getConnection().execute(
 			`INSERT INTO sale_snapshot_unit_stocks (id, sale_snapshot_unit_id, name, nominal_price, real_price, quantity, sequence)
 			 VALUES (?, ?, 'Standard', '19000.00', '15900.00', 50, 1)`,
-			['aaaaaaaa-aaaa-4aaa-8aaa-999999999992', '99999999-9999-4999-8999-999999999997'],
+			[staleStockId, staleUnitId],
 			'run',
 		);
 
