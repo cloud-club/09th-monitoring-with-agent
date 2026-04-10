@@ -93,7 +93,7 @@ describe('backend integration behavior', () => {
 	});
 
 	it('rejects buyer write routes when x-customer-id is missing', async () => {
-		const response = await request(getHttpServer()).post('/api/cart/items').send({
+		const response = await request(getHttpServer()).post('/api/cart/context-check').send({
 			variantId: 'var-notebook-std',
 			quantity: 1,
 		});
@@ -112,7 +112,7 @@ describe('backend integration behavior', () => {
 
 	it('rejects buyer write routes when x-customer-id is unknown', async () => {
 		const response = await request(getHttpServer())
-			.post('/api/cart/items')
+			.post('/api/cart/context-check')
 			.set('x-customer-id', '99999999-9999-4999-8999-999999999999')
 			.send({
 				variantId: 'var-notebook-std',
@@ -130,7 +130,7 @@ describe('backend integration behavior', () => {
 
 	it('rejects seeded seller identities for buyer write routes', async () => {
 		const response = await request(getHttpServer())
-			.post('/api/cart/items')
+			.post('/api/cart/context-check')
 			.set('x-customer-id', '11111111-1111-4111-8111-111111111113')
 			.send({
 				variantId: 'var-notebook-std',
@@ -148,7 +148,7 @@ describe('backend integration behavior', () => {
 
 	it('accepts seeded buyer identities and preserves an inbound request id', async () => {
 		const response = await request(getHttpServer())
-			.post('/api/cart/items')
+			.post('/api/cart/context-check')
 			.set('x-customer-id', SEEDED_CUSTOMER_IDS[0])
 			.set(REQUEST_ID_HEADER, 'request-contract-001')
 			.send({
