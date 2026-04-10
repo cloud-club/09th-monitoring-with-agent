@@ -6,6 +6,8 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./test/vitest.setup.ts'],
     include: ['./src/**/*.it.spec.ts'],
-    exclude: ['./src/**/*.live.it.spec.ts']
+    exclude: ['./src/**/*.live.it.spec.ts'],
+    fileParallelism: false,
+    maxWorkers: 1,
   }
 })
