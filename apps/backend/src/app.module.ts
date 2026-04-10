@@ -9,9 +9,10 @@ import { HttpMetricsMiddleware } from './metrics/http-metrics.middleware';
 import { BuyerAccessGuard } from './request-context/buyer-access.guard';
 import { RequestContextController } from './request-context/request-context.controller';
 import { RequestContextMiddleware } from './request-context/request-context.middleware';
+import { SearchModule } from './search/search.module';
 
 @Module({
-	imports: [DatabaseModule, CatalogModule],
+	imports: [DatabaseModule, CatalogModule, SearchModule],
 	controllers: [HealthController, ContractController, RequestContextController],
 	providers: [PaginationQueryPipe, BuyerAccessGuard],
 })
