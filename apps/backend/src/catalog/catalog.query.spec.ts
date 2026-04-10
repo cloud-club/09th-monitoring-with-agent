@@ -1,0 +1,34 @@
+import { ERROR_CODES } from '../http/error-codes';
+import { HttpError } from '../http/http-error';
+
+import { DEFAULT_CATALOG_SORT, parseCatalogSort } from './catalog.query';
+
+describe('catalog query parsing', () => {
+	it('uses newest sorting by default', () => {
+		expect(parseCatalogSort(undefined)).toBe(DEFAULT_CATALOG_SORT);
+	});
+
+	it('accepts supported sorting values', () => {
+		expect(parseCatalogSort('newest')).toBe('newest');
+		expect(parseCatalogSort('price_asc')).toBe('price_asc');
+		expect(parseCatalogSort('price_desc')).toBe('price_desc');
+	});
+
+	it('rejects unsupported sorting values', () => {
+		expect(() => parseCatalogSort('oldest')).toThrowError(
+			expect.objectContaining({
+				code: ERROR_CODES.VALIDATION_ERROR,
+				message: 'Request validation failed',
+			}),
+		);
+	});
+
+	it('rejects non-string sorting values with validation error contract', () => {
+		expect(() => parseCatalogSort(123)).toThrowError(
+			expect.objectContaining({
+				code: ERROR_CODES.VALIDATION_ERROR,
+				message: 'Request validation failed',
+			}),
+		);
+	});
+});
