@@ -1,5 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 
+import { randomUUID } from 'node:crypto';
+
 import { EntityManager } from '@mikro-orm/core';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -156,11 +158,12 @@ describe('catalog integration behavior', () => {
 	});
 
 	it('does not duplicate variants when multiple snapshot contents exist', async () => {
+		const duplicateContentId = randomUUID();
 		await entityManager.getConnection().execute(
 			`INSERT INTO sale_snapshot_contents (id, sale_snapshot_id, title, format, body, revert_policy)
 			 VALUES (?, ?, ?, ?, ?, ?)`,
 			[
-				'99999999-9999-4999-8999-999999999991',
+				duplicateContentId,
 				FIXTURE_IDS.saleSnapshots.notebook,
 				'Monitoring Notebook Duplicate',
 				'markdown',
