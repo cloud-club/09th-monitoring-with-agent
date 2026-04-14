@@ -1,10 +1,11 @@
 import type { Request } from 'express';
 import type { OrderResponse } from './order.controller.types';
 
-import { Body, Controller, Get, Inject, Logger, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Post, Req, UseGuards } from '@nestjs/common';
 
 import { ok } from '../http/contracts';
-import { getRequestContext, getRequestTelemetryContext } from '../request-context/request-context';
+import { AppLoggerService } from '../logging/app-logger.service';
+import { getRequestContext } from '../request-context/request-context';
 import { BuyerAccessGuard } from '../request-context/buyer-access.guard';
 
 import { parseRequiredUuidLike } from './order.query';
@@ -26,9 +27,10 @@ function getBuyerCustomerId(request: Request): string {
 @Controller('/api/orders')
 @UseGuards(BuyerAccessGuard)
 export class OrderController {
-	private readonly logger = new Logger(OrderController.name);
-
-	public constructor(@Inject(OrderService) private readonly orderService: OrderService) {}
+	public constructor(
+		@Inject(AppLoggerService) private readonly appLogger: AppLoggerService,
+		@Inject(OrderService) private readonly orderService: OrderService,
+	) {}
 
 	@Post()
 	public async createOrder(@Req() request: Request, @Body() body: CreateOrderBody): Promise<OrderResponse> {
@@ -39,17 +41,15 @@ export class OrderController {
 			parseRequiredUuidLike(body.addressId, 'addressId'),
 		);
 
-		const telemetry = getRequestTelemetryContext(request);
-		this.logger.log(JSON.stringify({
-			event_name: 'order.created',
-			result: 'created',
-			request_id: telemetry.requestId,
-			user_role: telemetry.userRole,
-			endpoint: '/api/orders',
-			error_code: null,
-			order_id: order.order_id,
-			cart_id: parseRequiredUuidLike(body.cartId, 'cartId'),
-		}));
+		this.appLogger.logDomainEvent({
+			request,
+			eventName: 'order.created',
+			result: 'success',
+			fields: {
+				order_id: order.order_id,
+				cart_id: parseRequiredUuidLike(body.cartId, 'cartId'),
+			},
+		});
 
 		return ok({ order });
 	}

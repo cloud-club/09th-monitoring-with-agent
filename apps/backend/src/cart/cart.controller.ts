@@ -4,6 +4,7 @@ import type { CartResponse } from './cart.controller.types';
 import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 
 import { ok } from '../http/contracts';
+import { AppLoggerService } from '../logging/app-logger.service';
 import { getRequestContext } from '../request-context/request-context';
 import { BuyerAccessGuard } from '../request-context/buyer-access.guard';
 
@@ -26,7 +27,10 @@ function getBuyerCustomerId(request: Request): string {
 @Controller('/api/cart')
 @UseGuards(BuyerAccessGuard)
 export class CartController {
-	public constructor(@Inject(CartService) private readonly cartService: CartService) {}
+	public constructor(
+		@Inject(AppLoggerService) private readonly appLogger: AppLoggerService,
+		@Inject(CartService) private readonly cartService: CartService,
+	) {}
 
 	@Get()
 	public async getCart(@Req() request: Request): Promise<CartResponse> {
@@ -45,6 +49,16 @@ export class CartController {
 			parseCartQuantity(body.quantity),
 		);
 
+		this.appLogger.logDomainEvent({
+			request,
+			eventName: 'cart.item_added',
+			result: 'success',
+			fields: {
+				cart_id: cart.cart_id,
+				variant_id: parseCartVariantId(body.variantId),
+			},
+		});
+
 		return ok({ cart });
 	}
 
@@ -59,6 +73,17 @@ export class CartController {
 			cartItemId,
 			parseRequiredCartQuantity(body.quantity),
 		);
+
+		const updatedItem = cart.items.find((item) => item.cart_item_id === cartItemId);
+		this.appLogger.logDomainEvent({
+			request,
+			eventName: 'cart.item_updated',
+			result: 'success',
+			fields: {
+				cart_id: cart.cart_id,
+				variant_id: updatedItem?.variant_id,
+			},
+		});
 
 		return ok({ cart });
 	}
