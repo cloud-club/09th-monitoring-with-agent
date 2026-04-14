@@ -15,7 +15,7 @@ export type OrderView = {
 	order_id: string;
 	customer_id: string;
 	address_id: string | null;
-	status: 'pending_payment';
+	status: 'pending_payment' | 'payment_failed' | 'paid';
 	items: OrderLine[];
 	total_amount: string;
 };

@@ -4,7 +4,7 @@ import { EntityManager } from '@mikro-orm/core';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { ERROR_CODES } from '../http/error-codes';
-import { HttpError, NotFoundError } from '../http/http-error';
+import { HttpError, NotFoundError, StateConflictError } from '../http/http-error';
 
 import type { OrderLine, OrderView } from './order.types';
 
@@ -28,6 +28,7 @@ type OrderRow = {
 	readonly order_id: string;
 	readonly customer_id: string;
 	readonly address_id: string | null;
+	readonly status: 'pending_payment' | 'payment_failed' | 'paid';
 	readonly order_item_id: string;
 	readonly cart_item_id: string;
 	readonly snapshot_id: string;
@@ -124,6 +125,11 @@ const ORDER_VIEW_SQL = `
 		o.id AS order_id,
 		o.customer_id,
 		o.address_id,
+		CASE
+			WHEN payment.id IS NOT NULL THEN 'paid'
+			WHEN latest_attempt.status = 'failed' THEN 'payment_failed'
+			ELSE 'pending_payment'
+		END AS status,
 		oi.id AS order_item_id,
 		oi.cart_item_id,
 		ci.sale_snapshot_id AS snapshot_id,
@@ -139,6 +145,14 @@ const ORDER_VIEW_SQL = `
 	JOIN cart_items ci ON ci.id = oi.cart_item_id
 	JOIN cart_item_stocks cis ON cis.cart_item_id = ci.id
 	JOIN sale_snapshots ss ON ss.id = ci.sale_snapshot_id
+	LEFT JOIN order_payments payment ON payment.order_id = o.id
+	LEFT JOIN LATERAL (
+		SELECT pa.status
+		FROM payment_attempts pa
+		WHERE pa.order_id = o.id
+		ORDER BY pa.created_at DESC, pa.id DESC
+		LIMIT 1
+	) latest_attempt ON TRUE
 	JOIN LATERAL (
 		SELECT title
 		FROM sale_snapshot_contents content
@@ -154,7 +168,7 @@ const ORDER_VIEW_SQL = `
 `;
 
 function createConflictError(message: string, details?: unknown): HttpError {
-	return new HttpError(409, ERROR_CODES.BAD_REQUEST, message, details);
+	return new StateConflictError(message, details);
 }
 
 function toFixedPrice(value: string | number): string {
@@ -186,7 +200,7 @@ function mapOrderRows(rows: readonly OrderRow[]): OrderView {
 		order_id: firstRow.order_id,
 		customer_id: firstRow.customer_id,
 		address_id: firstRow.address_id,
-		status: 'pending_payment',
+		status: firstRow.status,
 		items,
 		total_amount: toFixedPrice(totalAmount),
 	};

@@ -184,7 +184,7 @@ describe('order integration behavior', () => {
 			});
 
 		expect(response.status).toBe(409);
-		expect(response.body.error.code).toBe(ERROR_CODES.BAD_REQUEST);
+		expect(response.body.error.code).toBe(ERROR_CODES.STATE_CONFLICT);
 
 		const afterCount = await entityManager.getConnection().execute<{ count: string }>(
 			'SELECT COUNT(*)::text AS count FROM orders',
@@ -211,7 +211,7 @@ describe('order integration behavior', () => {
 			});
 
 		expect(response.status).toBe(409);
-		expect(response.body.error.code).toBe(ERROR_CODES.BAD_REQUEST);
+		expect(response.body.error.code).toBe(ERROR_CODES.STATE_CONFLICT);
 
 		const cartAfter = await request(app.getHttpServer())
 			.get('/api/cart')
@@ -279,7 +279,7 @@ describe('order integration behavior', () => {
 			});
 
 		expect(response.status).toBe(409);
-		expect(response.body.error.code).toBe(ERROR_CODES.BAD_REQUEST);
+		expect(response.body.error.code).toBe(ERROR_CODES.STATE_CONFLICT);
 
 		const afterCount = await entityManager.getConnection().execute<{ count: string }>(
 			'SELECT COUNT(*)::text AS count FROM orders',
@@ -314,6 +314,80 @@ describe('order integration behavior', () => {
 			});
 
 		expect(replay.status).toBe(409);
-		expect(replay.body.error.code).toBe(ERROR_CODES.BAD_REQUEST);
+		expect(replay.body.error.code).toBe(ERROR_CODES.STATE_CONFLICT);
+	});
+
+	it('rolls back when the latest snapshot price changes even if stock remains available', async () => {
+		await entityManager.getConnection().execute(
+			`INSERT INTO sale_snapshots (id, sale_id) VALUES (?, '77777777-7777-4777-8777-777777777771')`,
+			[staleSnapshotId],
+			'run',
+		);
+		await entityManager.getConnection().execute(
+			`INSERT INTO sale_snapshot_contents (id, sale_snapshot_id, title, format, body, revert_policy)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			[staleContentId, staleSnapshotId, 'Monitoring Notebook', 'markdown', 'Price changed snapshot', 'manual'],
+			'run',
+		);
+		await entityManager.getConnection().execute(
+			`INSERT INTO sale_snapshot_units (id, sale_snapshot_id, name, "primary", required, sequence)
+			 VALUES (?, ?, 'variant', TRUE, TRUE, 1)`,
+			[staleUnitId, staleSnapshotId],
+			'run',
+		);
+		await entityManager.getConnection().execute(
+			`INSERT INTO sale_snapshot_unit_stocks (id, sale_snapshot_unit_id, name, nominal_price, real_price, quantity, sequence)
+			 VALUES (?, ?, 'Standard', '12900.00', '11900.00', 50, 1)`,
+			[staleStockId, staleUnitId],
+			'run',
+		);
+
+		const response = await request(app.getHttpServer())
+			.post('/api/orders')
+			.set('x-customer-id', BUYER_ONE)
+			.send({
+				cartId: checkoutCart.cartId,
+				addressId: ADDRESS_ONE,
+			});
+
+		expect(response.status).toBe(409);
+		expect(response.body.error.code).toBe(ERROR_CODES.STATE_CONFLICT);
+	});
+
+	it('rolls back when a cart line variant disappears from the current active snapshot', async () => {
+		await entityManager.getConnection().execute(
+			`INSERT INTO sale_snapshots (id, sale_id) VALUES (?, '77777777-7777-4777-8777-777777777771')`,
+			[staleSnapshotId],
+			'run',
+		);
+		await entityManager.getConnection().execute(
+			`INSERT INTO sale_snapshot_contents (id, sale_snapshot_id, title, format, body, revert_policy)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			[staleContentId, staleSnapshotId, 'Monitoring Notebook', 'markdown', 'Variant removed snapshot', 'manual'],
+			'run',
+		);
+		await entityManager.getConnection().execute(
+			`INSERT INTO sale_snapshot_units (id, sale_snapshot_id, name, "primary", required, sequence)
+			 VALUES (?, ?, 'variant', TRUE, TRUE, 1)`,
+			[staleUnitId, staleSnapshotId],
+			'run',
+		);
+		await entityManager.getConnection().execute(
+			`INSERT INTO sale_snapshot_unit_stocks (id, sale_snapshot_unit_id, name, nominal_price, real_price, quantity, sequence)
+			 VALUES (?, ?, 'Large', '10900.00', '9900.00', 50, 1)`,
+			[staleStockId, staleUnitId],
+			'run',
+		);
+
+		const response = await request(app.getHttpServer())
+			.post('/api/orders')
+			.set('x-customer-id', BUYER_ONE)
+			.send({
+				cartId: checkoutCart.cartId,
+				addressId: ADDRESS_ONE,
+			});
+
+		expect(response.status).toBe(409);
+		expect(response.body.error.code).toBe(ERROR_CODES.STATE_CONFLICT);
 	});
 });
