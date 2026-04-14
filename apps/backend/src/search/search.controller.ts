@@ -2,23 +2,24 @@ import type { Request } from 'express';
 import type { PaginationQuery } from '../http/pagination';
 import type { SearchProductsResponse } from './search.controller.types';
 
-import { Controller, Get, Inject, Logger, Query, Req } from '@nestjs/common';
+import { Controller, Get, Inject, Query, Req } from '@nestjs/common';
 
 import { ok } from '../http/contracts';
 import { ERROR_CODES } from '../http/error-codes';
 import { HttpError } from '../http/http-error';
 import { createPaginationMeta } from '../http/pagination';
 import { PaginationQueryPipe } from '../http/pipes/pagination-query.pipe';
-import { getRequestTelemetryContext } from '../request-context/request-context';
+import { AppLoggerService } from '../logging/app-logger.service';
 
 import { SearchService } from './search.service';
 import { validateSearchTerm } from './search.query';
 
 @Controller('/api')
 export class SearchController {
-	private readonly logger = new Logger(SearchController.name);
-
-	public constructor(@Inject(SearchService) private readonly searchService: SearchService) {}
+	public constructor(
+		@Inject(AppLoggerService) private readonly appLogger: AppLoggerService,
+		@Inject(SearchService) private readonly searchService: SearchService,
+	) {}
 
 	@Get('/search')
 	public async searchProducts(
@@ -26,22 +27,20 @@ export class SearchController {
 		@Query(PaginationQueryPipe) paginationQuery: PaginationQuery,
 		@Query('q') query: string | undefined,
 	): Promise<SearchProductsResponse> {
-		const telemetryContext = getRequestTelemetryContext(request);
 		const validation = validateSearchTerm(query);
 
 		if (!validation.ok) {
-			this.logger.warn(
-				JSON.stringify({
-					event_name: 'search.executed',
-					result: 'validation_failed',
-					request_id: telemetryContext.requestId,
-					user_role: telemetryContext.userRole,
-					endpoint: '/api/search',
-					error_code: ERROR_CODES.VALIDATION_ERROR,
+			this.appLogger.logDomainEvent({
+				request,
+				level: 'warn',
+				eventName: 'search.executed',
+				result: 'validation_error',
+				errorCode: ERROR_CODES.VALIDATION_ERROR,
+				fields: {
 					query,
-					issues: validation.issues,
-				}),
-			);
+					issues: JSON.stringify(validation.issues),
+				},
+			});
 
 			throw new HttpError(400, ERROR_CODES.VALIDATION_ERROR, 'Request validation failed', {
 				issues: validation.issues,
@@ -54,19 +53,28 @@ export class SearchController {
 		});
 
 		if (result.total === 0) {
-			this.logger.log(
-				JSON.stringify({
-					event_name: 'search.executed',
-					result: 'zero_result',
-					request_id: telemetryContext.requestId,
-					user_role: telemetryContext.userRole,
-					endpoint: '/api/search',
-					error_code: null,
+			this.appLogger.logDomainEvent({
+				request,
+				eventName: 'search.executed',
+				result: 'zero_result',
+				fields: {
 					query: validation.value,
 					page: paginationQuery.page,
 					limit: paginationQuery.limit,
-				}),
-			);
+				},
+			});
+		} else {
+			this.appLogger.logDomainEvent({
+				request,
+				eventName: 'search.executed',
+				result: 'success',
+				fields: {
+					query: validation.value,
+					page: paginationQuery.page,
+					limit: paginationQuery.limit,
+					returned_count: result.items.length,
+				},
+			});
 		}
 
 		return ok(
