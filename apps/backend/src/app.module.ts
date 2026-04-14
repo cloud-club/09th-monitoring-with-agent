@@ -6,6 +6,8 @@ import { ContractController } from './contract/contract.controller';
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
 import { PaginationQueryPipe } from './http/pipes/pagination-query.pipe';
+import { LoggingModule } from './logging/logging.module';
+import { RequestLoggingMiddleware } from './logging/request-logging.middleware';
 import { HttpMetricsMiddleware } from './metrics/http-metrics.middleware';
 import { OrderModule } from './order/order.module';
 import { PaymentModule } from './payment/payment.module';
@@ -16,13 +18,13 @@ import { RecommendationModule } from './recommendation/recommendation.module';
 import { SearchModule } from './search/search.module';
 
 @Module({
-	imports: [DatabaseModule, CatalogModule, SearchModule, RecommendationModule, CartModule, OrderModule, PaymentModule],
+	imports: [LoggingModule, DatabaseModule, CatalogModule, SearchModule, RecommendationModule, CartModule, OrderModule, PaymentModule],
 	controllers: [HealthController, ContractController, RequestContextController],
 	providers: [PaginationQueryPipe, BuyerAccessGuard],
 })
 export class AppModule implements NestModule {
 	public configure(consumer: MiddlewareConsumer): void {
-		consumer.apply(RequestContextMiddleware, HttpMetricsMiddleware).forRoutes({
+		consumer.apply(RequestContextMiddleware, RequestLoggingMiddleware, HttpMetricsMiddleware).forRoutes({
 			path: '*',
 			method: RequestMethod.ALL,
 		});
