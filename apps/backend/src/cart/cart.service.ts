@@ -4,7 +4,7 @@ import { EntityManager } from '@mikro-orm/core';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { ERROR_CODES } from '../http/error-codes';
-import { HttpError, NotFoundError } from '../http/http-error';
+import { HttpError, NotFoundError, StateConflictError } from '../http/http-error';
 
 import { CART_ITEM_MAX_QUANTITY } from './cart.types';
 import type { CartLine, CartView } from './cart.types';
@@ -218,7 +218,7 @@ function mapCartRows(rows: readonly CartRow[]): CartView {
 }
 
 function createUnavailableError(message: string, details: unknown): HttpError {
-	return new HttpError(409, ERROR_CODES.BAD_REQUEST, message, details);
+	return new StateConflictError(message, details);
 }
 
 @Injectable()

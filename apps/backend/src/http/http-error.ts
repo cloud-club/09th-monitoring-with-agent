@@ -22,6 +22,13 @@ export class BadRequestError extends HttpError {
 	}
 }
 
+export class StateConflictError extends HttpError {
+	public constructor(message: string, details?: unknown) {
+		super(409, ERROR_CODES.STATE_CONFLICT, message, details);
+		this.name = 'StateConflictError';
+	}
+}
+
 export class NotFoundError extends HttpError {
 	public constructor(message: string, details?: unknown) {
 		super(404, ERROR_CODES.NOT_FOUND, message, details);
