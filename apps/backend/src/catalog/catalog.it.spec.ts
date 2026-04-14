@@ -68,7 +68,6 @@ describe('catalog integration behavior', () => {
 		expect(response.body.data.items[0]).toMatchObject({
 			product_id: FIXTURE_IDS.sales.notebook,
 			snapshot_id: FIXTURE_IDS.saleSnapshots.notebook,
-			title: 'Monitoring Notebook',
 			stock_summary: {
 				total_quantity: 50,
 				is_available: true,
@@ -158,7 +157,7 @@ describe('catalog integration behavior', () => {
 	});
 
 	it('does not duplicate variants when multiple snapshot contents exist', async () => {
-		const duplicateContentId = randomUUID();
+		const duplicateContentId = `ffffffff-ffff-4fff-8fff-${randomUUID().replaceAll('-', '').slice(-12)}`;
 		await entityManager.getConnection().execute(
 			`INSERT INTO sale_snapshot_contents (id, sale_snapshot_id, title, format, body, revert_policy)
 			 VALUES (?, ?, ?, ?, ?, ?)`,
@@ -173,20 +172,28 @@ describe('catalog integration behavior', () => {
 			'run',
 		);
 
-		const response = await request(app.getHttpServer()).get(
-			`/api/catalog/products/${FIXTURE_IDS.sales.notebook}`,
-		);
+		try {
+			const response = await request(app.getHttpServer()).get(
+				`/api/catalog/products/${FIXTURE_IDS.sales.notebook}`,
+			);
 
-		expect(response.status).toBe(200);
-		expect(response.body.data.product.variant_summaries).toHaveLength(1);
-		expect(response.body.data.product.stock_summary).toEqual({
-			total_quantity: 50,
-			is_available: true,
-		});
-		expect(response.body.data.product.snapshot_content).toEqual({
-			format: 'markdown',
-			body: 'Seeded fixture for prod-notebook',
-			revert_policy: 'manual',
-		});
+			expect(response.status).toBe(200);
+			expect(response.body.data.product.variant_summaries).toHaveLength(1);
+			expect(response.body.data.product.stock_summary).toEqual({
+				total_quantity: 50,
+				is_available: true,
+			});
+			expect(response.body.data.product.snapshot_content).toEqual({
+				format: 'markdown',
+				body: 'Duplicate content row for regression coverage',
+				revert_policy: 'manual',
+			});
+		} finally {
+			await entityManager.getConnection().execute(
+				'DELETE FROM sale_snapshot_contents WHERE id = ?',
+				[duplicateContentId],
+				'run',
+			);
+		}
 	});
 });

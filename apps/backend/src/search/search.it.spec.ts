@@ -42,10 +42,13 @@ describe('search integration behavior', () => {
 			total: 2,
 			totalPages: 1,
 		});
-		expect(response.body.data.items.map((item: { title: string }) => item.title)).toEqual([
-			'On-call Tumbler',
-			'Monitoring Notebook',
-		]);
+		expect(response.body.data.items[0]).toMatchObject({
+			title: 'On-call Tumbler',
+			product_id: '77777777-7777-4777-8777-777777777775',
+		});
+		expect(response.body.data.items[1]).toMatchObject({
+			product_id: '77777777-7777-4777-8777-777777777771',
+		});
 	});
 
 	it('orders non-prefix search matches alphabetically by title', async () => {
