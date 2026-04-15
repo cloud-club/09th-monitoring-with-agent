@@ -1,11 +1,15 @@
 import type { Request } from 'express';
 import type { PaymentAttemptListResponse, PaymentAttemptResponse } from './payment.controller.types';
+import type { PaymentOutcome } from './payment.query';
 
 import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 
 import { ok } from '../http/contracts';
+import { ERROR_CODES } from '../http/error-codes';
+import { HttpError } from '../http/http-error';
 import { AppLoggerService } from '../logging/app-logger.service';
+import { incrementPaymentAttempt } from '../metrics/metrics-registry';
 import { getRequestContext } from '../request-context/request-context';
 import { BuyerAccessGuard } from '../request-context/buyer-access.guard';
 
@@ -49,9 +53,22 @@ export class PaymentController {
 		@Param('orderId') orderId: string,
 		@Body() body: CreatePaymentAttemptBody,
 	): Promise<PaymentAttemptResponse> {
-		const requestKey = parseRequestKey(body.requestKey);
-		const outcome = parseOutcome(body.outcome);
-		const failureCode = parseFailureCode(outcome, body.failureCode);
+		let requestKey: string;
+		let outcome: PaymentOutcome;
+		let failureCode: string | null;
+
+		try {
+			requestKey = parseRequestKey(body.requestKey);
+			outcome = parseOutcome(body.outcome);
+			failureCode = parseFailureCode(outcome, body.failureCode);
+		} catch (error) {
+			if (error instanceof HttpError && error.code === ERROR_CODES.VALIDATION_ERROR) {
+				incrementPaymentAttempt('validation_error');
+			}
+
+			throw error;
+		}
+
 		const customerId = getBuyerCustomerId(request);
 		this.appLogger.logDomainEvent({
 			request,
@@ -62,6 +79,11 @@ export class PaymentController {
 			},
 		});
 		const { attempt, created } = await this.paymentService.createAttempt(customerId, orderId, requestKey, outcome, failureCode);
+
+		if (created) {
+			incrementPaymentAttempt('started');
+			incrementPaymentAttempt(outcome === 'success' ? 'succeeded' : 'failed');
+		}
 
 		response.status(created ? HttpStatus.CREATED : HttpStatus.OK);
 		this.appLogger.logDomainEvent({
