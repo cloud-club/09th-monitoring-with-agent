@@ -10,6 +10,7 @@ import { HttpError } from '../http/http-error';
 import { createPaginationMeta } from '../http/pagination';
 import { PaginationQueryPipe } from '../http/pipes/pagination-query.pipe';
 import { AppLoggerService } from '../logging/app-logger.service';
+import { incrementSearchRequest } from '../metrics/metrics-registry';
 
 import { SearchService } from './search.service';
 import { validateSearchTerm } from './search.query';
@@ -42,6 +43,8 @@ export class SearchController {
 				},
 			});
 
+			incrementSearchRequest('validation_error');
+
 			throw new HttpError(400, ERROR_CODES.VALIDATION_ERROR, 'Request validation failed', {
 				issues: validation.issues,
 			});
@@ -63,6 +66,8 @@ export class SearchController {
 					limit: paginationQuery.limit,
 				},
 			});
+
+			incrementSearchRequest('zero_result');
 		} else {
 			this.appLogger.logDomainEvent({
 				request,
@@ -75,6 +80,8 @@ export class SearchController {
 					returned_count: result.items.length,
 				},
 			});
+
+			incrementSearchRequest('success');
 		}
 
 		return ok(

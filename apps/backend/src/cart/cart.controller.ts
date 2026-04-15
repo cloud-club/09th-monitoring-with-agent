@@ -4,7 +4,10 @@ import type { CartResponse } from './cart.controller.types';
 import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 
 import { ok } from '../http/contracts';
+import { ERROR_CODES } from '../http/error-codes';
+import { HttpError } from '../http/http-error';
 import { AppLoggerService } from '../logging/app-logger.service';
+import { incrementCartAdd } from '../metrics/metrics-registry';
 import { getRequestContext } from '../request-context/request-context';
 import { BuyerAccessGuard } from '../request-context/buyer-access.guard';
 
@@ -43,23 +46,37 @@ export class CartController {
 		@Req() request: Request,
 		@Body() body: CartItemMutationBody,
 	): Promise<CartResponse> {
-		const cart = await this.cartService.addItem(
-			getBuyerCustomerId(request),
-			parseCartVariantId(body.variantId),
-			parseCartQuantity(body.quantity),
-		);
+		try {
+			const variantId = parseCartVariantId(body.variantId);
+			const cart = await this.cartService.addItem(
+				getBuyerCustomerId(request),
+				variantId,
+				parseCartQuantity(body.quantity),
+			);
 
-		this.appLogger.logDomainEvent({
-			request,
-			eventName: 'cart.item_added',
-			result: 'success',
-			fields: {
-				cart_id: cart.cart_id,
-				variant_id: parseCartVariantId(body.variantId),
-			},
-		});
+			incrementCartAdd('success');
+			this.appLogger.logDomainEvent({
+				request,
+				eventName: 'cart.item_added',
+				result: 'success',
+				fields: {
+					cart_id: cart.cart_id,
+					variant_id: variantId,
+				},
+			});
 
-		return ok({ cart });
+			return ok({ cart });
+		} catch (error) {
+			if (error instanceof HttpError) {
+				if (error.code === ERROR_CODES.VALIDATION_ERROR) {
+					incrementCartAdd('validation_error');
+				} else if (error.code === ERROR_CODES.STATE_CONFLICT) {
+					incrementCartAdd('conflict');
+				}
+			}
+
+			throw error;
+		}
 	}
 
 	@Patch('/items/:cartItemId')
