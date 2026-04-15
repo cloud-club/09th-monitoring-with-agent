@@ -70,7 +70,8 @@ describe('backend integration behavior', () => {
 		expect(response.status).toBe(200);
 		expect(response.headers['content-type'] ?? '').toMatch(/text\/plain/);
 		expect(response.text).toMatch(/mwa_http_requests_total/);
-		expect(response.text).toMatch(/user_role="anonymous"/);
+		expect(response.text).toMatch(/service="backend"/);
+		expect(response.text).toMatch(/handler="\/health"/);
 	});
 
 	it('keeps public catalog context routes accessible without x-customer-id', async () => {

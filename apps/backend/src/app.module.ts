@@ -8,6 +8,7 @@ import { HealthController } from './health/health.controller';
 import { PaginationQueryPipe } from './http/pipes/pagination-query.pipe';
 import { LoggingModule } from './logging/logging.module';
 import { RequestLoggingMiddleware } from './logging/request-logging.middleware';
+import { MetricsController } from './metrics/metrics.controller';
 import { HttpMetricsMiddleware } from './metrics/http-metrics.middleware';
 import { OrderModule } from './order/order.module';
 import { PaymentModule } from './payment/payment.module';
@@ -19,7 +20,7 @@ import { SearchModule } from './search/search.module';
 
 @Module({
 	imports: [LoggingModule, DatabaseModule, CatalogModule, SearchModule, RecommendationModule, CartModule, OrderModule, PaymentModule],
-	controllers: [HealthController, ContractController, RequestContextController],
+	controllers: [HealthController, ContractController, MetricsController, RequestContextController],
 	providers: [PaginationQueryPipe, BuyerAccessGuard],
 })
 export class AppModule implements NestModule {
