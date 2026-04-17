@@ -1,5 +1,13 @@
 import { collectDefaultMetrics, Counter, Registry } from 'prom-client';
 
+type HttpRequestMetricInput = {
+	readonly method: string;
+	readonly path: string;
+	readonly statusCode: number;
+	readonly userRole: string;
+	readonly requestId: string;
+};
+
 const metricsRegistry = new Registry();
 
 collectDefaultMetrics({ register: metricsRegistry });
@@ -7,15 +15,16 @@ collectDefaultMetrics({ register: metricsRegistry });
 const httpRequestsTotal = new Counter({
 	name: 'mwa_http_requests_total',
 	help: 'Total HTTP requests handled by backend',
-	labelNames: ['method', 'path', 'status'],
+	labelNames: ['method', 'path', 'status', 'user_role'],
 	registers: [metricsRegistry],
 });
 
-export function observeHttpRequest(method: string, path: string, statusCode: number): void {
+export function observeHttpRequest(input: HttpRequestMetricInput): void {
 	httpRequestsTotal.inc({
-		method,
-		path,
-		status: String(statusCode),
+		method: input.method,
+		path: input.path,
+		status: String(input.statusCode),
+		user_role: input.userRole,
 	});
 }
 

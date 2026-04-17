@@ -28,3 +28,10 @@ export class NotFoundError extends HttpError {
 		this.name = 'NotFoundError';
 	}
 }
+
+export class UnauthorizedCustomerError extends HttpError {
+	public constructor(message: string, details?: unknown) {
+		super(401, ERROR_CODES.UNAUTHORIZED_CUSTOMER, message, details);
+		this.name = 'UnauthorizedCustomerError';
+	}
+}
