@@ -23,6 +23,13 @@
 - Local benchmark runs require the k6 CLI to be installed separately.
 - GitHub Actions benchmark execution is provided by `.github/workflows/backend-benchmark.yml` and runs only through `workflow_dispatch`.
 
+## Request-context contract coverage
+
+- Public read contract: `GET /api/catalog/context-check`
+- Buyer write contract: `POST /api/cart/items`
+- `x-request-id` is echoed when provided and generated otherwise.
+- `x-customer-id` is required only for buyer write coverage and must match one seeded `customers.id`.
+
 ## Review policy for new tests
 
 Every PR that adds or modifies tests must explain:

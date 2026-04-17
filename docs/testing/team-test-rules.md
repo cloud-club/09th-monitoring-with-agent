@@ -20,9 +20,9 @@ Tests are designed to reduce repeated human review effort, not only to catch bug
 
 ## Current backend harness mapping
 
-- Unit: `npm run test:unit` -> Vitest `src/**/*.spec.ts`
-- Integration: `npm run test:integration` -> Vitest `src/**/*.it.spec.ts` (except `*.live.it.spec.ts`)
-- E2E(API): `npm run test:e2e` -> Playwright API tests `src/**/*.e2e.spec.ts`
+- Unit: `npm run test:unit` -> Vitest `test/unit/**/*.spec.ts`
+- Integration: `npm run test:integration` -> Vitest `test/integration/**/*.it.spec.ts`
+- E2E(API): `npm run test:e2e` -> Playwright API tests `test/e2e/**/*.e2e.spec.ts`
 - Live integration (manual): `LIVE_TEST=true BACKEND_LIVE_BASE_URL=<url> npm run test:integration:live` -> Vitest `src/**/*.live.it.spec.ts`
 - Required CI gate: `npm run test:ci`
 - Benchmark lane (manual): `BENCHMARK_BASE_URL=<url> npm run benchmark:api` -> k6 script `benchmarks/api-benchmark.k6.js`
