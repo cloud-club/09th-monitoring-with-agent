@@ -44,7 +44,7 @@ function readJsonLines(filePath: string): LogRecord[] {
 describe('structured logging integration behavior', () => {
 	let app: INestApplication;
 	let logDir: string;
-	let stdoutSpy: ReturnType<typeof vi.spyOn>;
+	let stdoutSpy: ReturnType<typeof vi.spyOn> | undefined;
 
 	beforeEach(async () => {
 		resetDatabase();
@@ -64,7 +64,7 @@ describe('structured logging integration behavior', () => {
 	});
 
 	afterEach(async () => {
-		stdoutSpy.mockRestore();
+		stdoutSpy?.mockRestore();
 
 		if (app !== undefined) {
 			await app.close();
@@ -75,6 +75,11 @@ describe('structured logging integration behavior', () => {
 	});
 
 	it('writes identical JSON payloads to stdout and file for success and failure flows', async () => {
+		const activeStdoutSpy = stdoutSpy;
+		if (activeStdoutSpy === undefined) {
+			throw new Error('stdout spy was not initialized');
+		}
+
 		await request(app.getHttpServer())
 			.get('/api/search?q=on&page=1&limit=20')
 			.set('x-request-id', 'request-success-001');
@@ -83,7 +88,7 @@ describe('structured logging integration behavior', () => {
 			.get('/api/search?q=a&page=1&limit=20')
 			.set('x-request-id', 'request-failure-001');
 
-		const stdoutLines = stdoutSpy.mock.calls
+		const stdoutLines = activeStdoutSpy.mock.calls
 			.map((call: unknown[]) => call[0])
 			.filter((line): line is string => typeof line === 'string' && line.startsWith('{'));
 		const fileLines = readFileSync(join(logDir, 'mwa-app.log'), 'utf8')

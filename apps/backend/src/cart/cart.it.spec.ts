@@ -1,8 +1,10 @@
 import type { INestApplication } from '@nestjs/common';
 
+import { execFileSync } from 'node:child_process';
+
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ERROR_CODES } from '../http/error-codes';
 import { HttpExceptionFilter } from '../http/http-exception.filter';
@@ -13,10 +15,22 @@ const BUYER_TWO = '11111111-1111-4111-8111-111111111112';
 const NOTEBOOK_VARIANT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const MUG_VARIANT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
 
+function resetDatabase(): void {
+	execFileSync('npm', ['run', 'db:reset:test'], {
+		cwd: process.cwd(),
+		env: {
+			...process.env,
+			DATABASE_URL,
+		},
+		stdio: 'pipe',
+	});
+}
+
 describe('cart integration behavior', () => {
 	let app: INestApplication;
 
-	beforeAll(async () => {
+	beforeEach(async () => {
+		resetDatabase();
 		process.env.DATABASE_URL = DATABASE_URL;
 
 		const { AppModule } = await import('../app.module');
@@ -30,7 +44,7 @@ describe('cart integration behavior', () => {
 		await app.init();
 	});
 
-	afterAll(async () => {
+	afterEach(async () => {
 		if (app !== undefined) {
 			await app.close();
 		}
