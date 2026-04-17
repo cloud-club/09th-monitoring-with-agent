@@ -1,4 +1,4 @@
-import { fail, ok } from './contracts';
+import { fail, ok } from '../../../src/http/contracts';
 
 describe('http contracts', () => {
 	it('returns a success envelope without meta when only data is provided', () => {

@@ -5,6 +5,7 @@
 	"description": "Phase 1 backend baseline (NestJS + TypeScript)",
 	"scripts": {
 		"dev": "tsx watch src/main.ts",
+		"postinstall": "npm run db:generate",
 		"build": "rm -rf dist && tsc -p tsconfig.build.json",
 		"lint": "eslint \"src/**/*.ts\"",
 		"lint:fix": "npm run lint -- --fix",
@@ -23,6 +24,7 @@
 		"benchmark:format": "node scripts/format-k6-summary.mjs benchmarks/results/summary.json benchmarks/results/comment.md",
 		"coverage": "vitest run --config test/vitest.unit.config.ts --coverage",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"db:generate": "prisma generate --schema prisma",
 		"db:migrate": "mikro-orm migration:up",
 		"db:migrate:dev": "mikro-orm migration:create",
 		"db:seed": "prisma db seed --schema prisma",

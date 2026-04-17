@@ -4,10 +4,10 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { ERROR_CODES } from './http/error-codes';
-import { HttpExceptionFilter } from './http/http-exception.filter';
-import { REQUEST_ID_HEADER } from './request-context/request-context';
-import { SEEDED_CUSTOMER_IDS } from './request-context/seeded-customer-ids';
+import { ERROR_CODES } from '../../src/http/error-codes';
+import { HttpExceptionFilter } from '../../src/http/http-exception.filter';
+import { REQUEST_ID_HEADER } from '../../src/request-context/request-context';
+import { SEEDED_CUSTOMER_IDS } from '../../src/request-context/seeded-customer-ids';
 
 type SupertestTarget = Parameters<typeof request>[0];
 
@@ -17,6 +17,7 @@ function isSupertestTarget(value: unknown): value is SupertestTarget {
 
 describe('backend integration behavior', () => {
 	let app: INestApplication;
+	const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://mwa:mwa@localhost:5432/mwa?schema=public';
 	const getHttpServer = (): SupertestTarget => {
 		const httpServer: unknown = app.getHttpServer();
 
@@ -28,9 +29,9 @@ describe('backend integration behavior', () => {
 	};
 
 	beforeAll(async () => {
-		process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/mwa_backend';
+		process.env.DATABASE_URL = databaseUrl;
 
-		const { AppModule } = await import('./app.module');
+		const { AppModule } = await import('../../src/app.module');
 
 		const testingModule = await Test.createTestingModule({
 			imports: [AppModule],

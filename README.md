@@ -7,6 +7,9 @@ T1 baseline provides a NestJS + TypeScript backend skeleton.
 - Stack: `NestJS + Typia(type contracts) + MikroORM`
 - Fixed port: `8080`
 - Health endpoint: `GET /health`
+- Catalog endpoints:
+  - `GET /api/catalog/products?page=1&limit=20&sort=newest|price_asc|price_desc`
+  - `GET /api/catalog/products/:productId`
 - Standard scripts: `dev`, `build`, `start`, `lint`, `format`, `test`, `test:e2e`, `test:integration:live`, `typecheck`
 - Seed/reset scripts: `db:seed`, `db:reset:test`, `db:assert:fixtures`
 
