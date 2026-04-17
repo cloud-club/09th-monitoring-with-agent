@@ -29,7 +29,7 @@
 		"db:migrate": "mikro-orm migration:up",
 		"db:migrate:dev": "mikro-orm migration:create",
 		"db:seed": "prisma db seed --schema prisma",
-		"db:reset:test": "prisma db push --force-reset --skip-generate --schema prisma && npm run db:seed",
+		"db:reset:test": "prisma db push --force-reset --schema prisma && npm run db:seed",
 		"db:assert:fixtures": "node test/fixtures/assert-deterministic-seed.js"
 	},
 	"prisma": {
