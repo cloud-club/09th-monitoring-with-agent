@@ -44,6 +44,7 @@ describe('order integration behavior', () => {
 	let staleStockId: string;
 
 	beforeAll(async () => {
+		resetDatabase();
 		process.env.DATABASE_URL = DATABASE_URL;
 
 		const { AppModule } = await import('../app.module');
