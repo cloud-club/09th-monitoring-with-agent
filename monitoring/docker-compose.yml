@@ -2,7 +2,7 @@ name: mwa
 
 # 실행(모니터링 폴더에서): export USER_ID=$(id -u) && docker compose up -d --build
 # 실행(루트에서): export USER_ID=$(id -u) && docker compose -f monitoring/docker-compose.yml up -d --build
-# 포트: 8080 웹 · 3000 Grafana · 9090 Prometheus · 3100 Loki · 9100 node_exporter · 8088 cAdvisor(컨테이너 메트릭)
+# 포트: 8080 backend · 8081 demo/qa scenarios · 3000 Grafana · 9090 Prometheus · 3100 Loki · 9100 node_exporter · 8088 cAdvisor(컨테이너 메트릭)
 # 앱 로그(stdout vs 파일) 합치는 법 → README「애플리케이션 로그 연동」
 
 services:
@@ -12,6 +12,7 @@ services:
       dockerfile: apps/backend/Dockerfile
     container_name: mwa-backend
     environment:
+      - HOST=0.0.0.0
       - DATABASE_URL=postgresql://mwa:mwa@postgres:5432/mwa?schema=public
     ports:
       - "8080:8080"
@@ -23,6 +24,32 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    networks:
+      - loki
+
+  mwa-demo:
+    build:
+      context: ./demo
+      dockerfile: Dockerfile
+    container_name: mwa-demo
+    environment:
+      - SCENARIO_BACKEND_BASE_URL=http://mwa-backend:8080
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./data/demo-logs:/app/logs
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mwa-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/qa/scenarios"]
       interval: 10s
       timeout: 5s
       retries: 6

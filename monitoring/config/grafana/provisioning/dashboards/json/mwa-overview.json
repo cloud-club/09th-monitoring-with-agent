@@ -209,12 +209,12 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
       "id": 4,
-      "title": "2) MWA 웹 — 모든 HTTP 응답이 끝날 때마다 올라가는 카운터 (mwa_http_requests_total)",
+      "title": "2) MWA 백엔드 HTTP — 실제 서버 핸들러 기준 (mwa_http_requests_total / mwa_http_request_duration_seconds)",
       "type": "row"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "메트릭 mwa_http_requests_total: method·path·status 라벨이 붙습니다. [5m] = 최근 5분 구간에서 초당 평균 증가율(rate)을 계산합니다.",
+      "description": "백엔드 메트릭 mwa_http_requests_total 은 service·handler·method·status_code 라벨을 가집니다. 이 패널은 backend 서비스 전체 요청 처리량을 최근 5분 평균 req/s로 표시합니다.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -232,17 +232,17 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(mwa_http_requests_total[5m]))",
-          "legendFormat": "전체 초당 요청",
+          "expr": "sum(rate(mwa_http_requests_total{service=\"backend\"}[5m]))",
+          "legendFormat": "backend total rps",
           "refId": "A"
         }
       ],
-      "title": "HTTP 처리 속도 — 전체 합산 (초당, 최근 5분 평균)",
+      "title": "HTTP 처리량 — backend 전체 합산 (초당, 최근 5분 평균)",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "같은 카운터를 path 라벨로 나눈 값입니다. /(메인), /action(폼 POST), /metrics, /health 등이 각각 따로 보입니다.",
+      "description": "백엔드 HTTP 메트릭을 handler + method 기준으로 묶습니다. UUID 경로는 서버에서 :id 로 정규화되어 시계열이 폭증하지 않습니다.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -260,24 +260,24 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (path) (rate(mwa_http_requests_total[5m]))",
-          "legendFormat": "{{path}}",
+          "expr": "sum by (handler, method) (rate(mwa_http_requests_total{service=\"backend\"}[5m]))",
+          "legendFormat": "{{method}} {{handler}}",
           "refId": "A"
         }
       ],
-      "title": "HTTP 처리 속도 — URL 경로(path)별 (초당, 최근 5분 평균)",
+      "title": "HTTP 처리량 — 핸들러(handler)별 (초당, 최근 5분 평균)",
       "type": "timeseries"
     },
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
       "id": 7,
-      "title": "3) 데모 버튼(폼 전송) — 서버가 POST /action 을 처리한 횟수 (mwa_button_clicks_total)",
+      "title": "3) 백엔드 비즈니스 결과 — search/cart/order/payment 카운터",
       "type": "row"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "의미: 서버가 '버튼 → 폼 제출'을 받아 처리할 때마다 카운터가 1 올라갑니다. 그래프는 그 누적값을 시간으로 나눈 값이라, 세로축 = 초당 평균 몇 건이 처리됐는지(최근 5분 구간 기준)입니다. 장바구니/상품보기 등은 action 라벨로 구분되고, 단순 페이지 열람(GET /)은 이 패널에 안 잡힙니다.",
+      "description": "실제 백엔드 도메인 카운터의 처리량을 보여줍니다. 검색, 장바구니 추가, 주문 생성, 결제 시도 각각의 최근 5분 평균 req/s 를 비교합니다.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -295,24 +295,42 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (action) (rate(mwa_button_clicks_total[5m]))",
-          "legendFormat": "{{action}}",
+          "expr": "sum(rate(mwa_search_requests_total[5m]))",
+          "legendFormat": "search",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(mwa_cart_add_total[5m]))",
+          "legendFormat": "cart add",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(mwa_order_create_total[5m]))",
+          "legendFormat": "order create",
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(mwa_payment_attempt_total[5m]))",
+          "legendFormat": "payment attempt",
+          "refId": "D"
         }
       ],
-      "title": "초당 처리된 폼 제출(버튼) 건수 — 최근 5분 평균, action 종류별",
+      "title": "비즈니스 처리량 — 도메인별 (초당, 최근 5분 평균)",
       "type": "timeseries"
     },
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
       "id": 11,
-      "title": "3b) 데모 쇼핑 — 구매 확정 시에만 증가 (mwa_product_orders_total)",
+      "title": "3b) 백엔드 비즈니스 결과 — result 라벨별 분해",
       "type": "row"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "상품 카드·랜덤 구매 버튼으로 주문이 기록될 때 product_id 라벨별로 카운트합니다. 로그에는 order_id·product_name·price_won 이 JSON 으로 같이 남습니다.",
+      "description": "각 백엔드 비즈니스 카운터의 result 라벨을 그대로 시계열로 보여줍니다. validation_error, conflict, success, started, failed 같은 실제 서버 결과값을 추적할 수 있습니다.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -330,24 +348,42 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (product_id) (rate(mwa_product_orders_total[5m]))",
-          "legendFormat": "{{product_id}}",
+          "expr": "sum by (result) (rate(mwa_search_requests_total[5m]))",
+          "legendFormat": "search {{result}}",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (result) (rate(mwa_cart_add_total[5m]))",
+          "legendFormat": "cart {{result}}",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (result) (rate(mwa_order_create_total[5m]))",
+          "legendFormat": "order {{result}}",
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (result) (rate(mwa_payment_attempt_total[5m]))",
+          "legendFormat": "payment {{result}}",
+          "refId": "D"
         }
       ],
-      "title": "초당 처리된 구매 건수 — 상품(sku)별, 최근 5분 평균",
+      "title": "비즈니스 결과 분해 — result 라벨별 (초당, 최근 5분 평균)",
       "type": "timeseries"
     },
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 },
       "id": 9,
-      "title": "4) 로그 — Loki (Docker 로그, compose_service 라벨)",
+      "title": "4) 로그 — Loki (mwa-backend stdout/stderr)",
       "type": "row"
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "description": "Promtail docker_sd가 붙인 compose_service=mwa-web 스트림입니다. stdout/stderr만 해당. JSON 줄에 event=order_placed 를 검색하면 주문 이벤트만 볼 수 있습니다.",
+      "description": "Promtail docker_sd가 붙인 compose_service=mwa-backend 스트림입니다. backend 구조화 로그와 request_id, endpoint, result, status_code를 Loki에서 바로 확인할 수 있습니다.",
       "gridPos": { "h": 12, "w": 24, "x": 0, "y": 52 },
       "id": 10,
       "options": {
@@ -359,12 +395,12 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{compose_service=\"mwa-web\"}",
+          "expr": "{compose_service=\"mwa-backend\"}",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "mwa-web 컨테이너 로그 (stdout/stderr)",
+      "title": "mwa-backend 컨테이너 로그 (stdout/stderr)",
       "type": "logs"
     }
   ],
@@ -375,7 +411,7 @@
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "MWA 개요 — 메트릭·로그 패널 이름 가이드",
+  "title": "MWA 백엔드 개요 — 서버 메트릭·로그 패널",
   "uid": "mwa-overview",
-  "version": 7
+  "version": 8
 }

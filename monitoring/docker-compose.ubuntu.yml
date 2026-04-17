@@ -1,3 +1,6 @@
+# Ubuntu override note:
+# - scenario web(demo/qa) uses the base compose service definition as-is
+# - this file only overrides host-specific collector mounts/options
 services:
   cadvisor:
     volumes:
