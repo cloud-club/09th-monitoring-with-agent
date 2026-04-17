@@ -1,3 +1,4 @@
+import process from 'node:process';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
