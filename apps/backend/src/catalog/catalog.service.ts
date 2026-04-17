@@ -1,8 +1,8 @@
+import { EntityManager } from '@mikro-orm/core';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { NotFoundError } from '../http/http-error';
 
-import { PrismaService } from '../database/prisma.service';
 import type {
 	CatalogListQuery,
 	CatalogListResult,
@@ -14,49 +14,94 @@ import type {
 	CatalogVariantSummary,
 } from './catalog.types';
 
-const ACTIVE_SALE_FILTER = {
-	openedAt: { not: null },
-	closedAt: null,
-	pausedAt: null,
-	suspendedAt: null,
+type CatalogRow = {
+	readonly sale_id: string;
+	readonly snapshot_id: string;
+	readonly snapshot_created_at: string | Date;
+	readonly title: string;
+	readonly format: string;
+	readonly body: string;
+	readonly revert_policy: string | null;
+	readonly unit_name: string;
+	readonly stock_id: string;
+	readonly stock_name: string;
+	readonly nominal_price: string;
+	readonly real_price: string;
+	readonly quantity: number;
+	readonly stock_sequence: number;
+	readonly unit_sequence: number;
 };
 
-async function loadCatalogSales(prisma: PrismaService) {
-	return prisma.sale.findMany({
-		where: ACTIVE_SALE_FILTER,
-		include: {
-			snapshots: {
-				orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-				take: 1,
-				include: {
-					contents: {
-						orderBy: { id: 'asc' },
-					},
-					units: {
-						orderBy: [{ sequence: 'asc' }, { id: 'asc' }],
-						include: {
-							stocks: {
-								orderBy: [{ sequence: 'asc' }, { id: 'asc' }],
-							},
-						},
-					},
-				},
-			},
-		},
-	});
-}
+export type CatalogRowsOptions = {
+	readonly productId?: string;
+	readonly titleQuery?: string;
+};
 
-type CatalogSaleRecord = Awaited<ReturnType<typeof loadCatalogSales>>[number];
-type CatalogSnapshotRecord = CatalogSaleRecord['snapshots'][number];
-type CatalogSnapshotUnitRecord = CatalogSnapshotRecord['units'][number];
-type CatalogVariantRecord = CatalogSnapshotUnitRecord['stocks'][number];
+const ACTIVE_SALE_FILTER_SQL = `
+	s.opened_at IS NOT NULL
+	AND s.closed_at IS NULL
+	AND s.paused_at IS NULL
+	AND s.suspended_at IS NULL
+`;
 
-function getLowestNumber(values: readonly number[]): number {
-	return values.reduce((lowest, current) => (current < lowest ? current : lowest));
-}
+const BASE_CATALOG_SQL = `
+	WITH latest_snapshots AS (
+		SELECT
+			ss.id,
+			ss.sale_id,
+			ss.created_at,
+			ROW_NUMBER() OVER (
+				PARTITION BY ss.sale_id
+				ORDER BY ss.created_at DESC, ss.id DESC
+			) AS snapshot_rank
+		FROM sale_snapshots ss
+	),
+	canonical_contents AS (
+		SELECT
+			content.id,
+			content.sale_snapshot_id,
+			content.title,
+			content.format,
+			content.body,
+			content.revert_policy,
+			ROW_NUMBER() OVER (
+				PARTITION BY content.sale_snapshot_id
+				ORDER BY content.id DESC
+			) AS content_rank
+		FROM sale_snapshot_contents content
+	)
+	SELECT
+		s.id AS sale_id,
+		ls.id AS snapshot_id,
+		ls.created_at AS snapshot_created_at,
+		content.title,
+		content.format,
+		content.body,
+		content.revert_policy,
+		unit.name AS unit_name,
+		stock.id AS stock_id,
+		stock.name AS stock_name,
+		stock.nominal_price::text AS nominal_price,
+		stock.real_price::text AS real_price,
+		stock.quantity,
+		stock.sequence AS stock_sequence,
+		unit.sequence AS unit_sequence
+	FROM sales s
+	JOIN latest_snapshots ls
+		ON ls.sale_id = s.id
+		AND ls.snapshot_rank = 1
+	JOIN canonical_contents content
+		ON content.sale_snapshot_id = ls.id
+		AND content.content_rank = 1
+	JOIN sale_snapshot_units unit
+		ON unit.sale_snapshot_id = ls.id
+	JOIN sale_snapshot_unit_stocks stock
+		ON stock.sale_snapshot_unit_id = unit.id
+	WHERE ${ACTIVE_SALE_FILTER_SQL}
+`;
 
-function getHighestNumber(values: readonly number[]): number {
-	return values.reduce((highest, current) => (current > highest ? current : highest));
+function toIsoString(value: string | Date): string {
+	return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
 function toPriceNumber(value: string): number {
@@ -67,23 +112,12 @@ function toPriceString(value: number): string {
 	return value.toFixed(2);
 }
 
-function createVariantSummaries(sale: CatalogSaleRecord): CatalogVariantSummary[] {
-	const snapshot = sale.snapshots[0];
-	if (snapshot === undefined) {
-		return [];
-	}
+function getLowestNumber(values: readonly number[]): number {
+	return values.reduce((lowest, current) => (current < lowest ? current : lowest));
+}
 
-	return snapshot.units.flatMap((unit: CatalogSnapshotUnitRecord) =>
-		unit.stocks.map((stock: CatalogVariantRecord) => ({
-			variant_id: stock.id,
-			unit_name: unit.name,
-			variant_name: stock.name,
-			nominal_price: toPriceString(toPriceNumber(stock.nominalPrice.toString())),
-			current_price: toPriceString(toPriceNumber(stock.realPrice.toString())),
-			available_quantity: stock.quantity,
-			is_available: stock.quantity > 0,
-		})),
-	);
+function getHighestNumber(values: readonly number[]): number {
+	return values.reduce((highest, current) => (current > highest ? current : highest));
 }
 
 function createPriceSummary(variants: readonly CatalogVariantSummary[]): CatalogPriceSummary | null {
@@ -111,47 +145,6 @@ function createStockSummary(variants: readonly CatalogVariantSummary[]): Catalog
 	};
 }
 
-function mapSaleToCatalogProduct(sale: CatalogSaleRecord): CatalogProductDetail | null {
-	const snapshot = sale.snapshots[0];
-	const content = snapshot?.contents[0];
-	if (snapshot === undefined || content === undefined) {
-		return null;
-	}
-
-	const variantSummaries = createVariantSummaries(sale);
-	const priceSummary = createPriceSummary(variantSummaries);
-	if (priceSummary === null) {
-		return null;
-	}
-
-	return {
-		product_id: sale.id,
-		snapshot_id: snapshot.id,
-		title: content.title,
-		price_summary: priceSummary,
-		stock_summary: createStockSummary(variantSummaries),
-		variant_summaries: variantSummaries,
-		latest_snapshot_created_at: snapshot.createdAt.toISOString(),
-		snapshot_content: {
-			format: content.format,
-			body: content.body,
-			revert_policy: content.revertPolicy,
-		},
-	};
-}
-
-function toCatalogListItem(product: CatalogProductDetail): CatalogProductListItem {
-	return {
-		product_id: product.product_id,
-		snapshot_id: product.snapshot_id,
-		title: product.title,
-		price_summary: product.price_summary,
-		stock_summary: product.stock_summary,
-		variant_summaries: product.variant_summaries,
-		latest_snapshot_created_at: product.latest_snapshot_created_at,
-	};
-}
-
 function compareCatalogProducts(
 	left: CatalogProductListItem,
 	right: CatalogProductListItem,
@@ -174,61 +167,138 @@ function compareCatalogProducts(
 	return right.latest_snapshot_created_at.localeCompare(left.latest_snapshot_created_at);
 }
 
+function mapCatalogRows(rows: readonly CatalogRow[]): CatalogProductDetail[] {
+	const groupedRows = new Map<string, CatalogRow[]>();
+
+	for (const row of rows) {
+		const existingRows = groupedRows.get(row.sale_id);
+
+		if (existingRows === undefined) {
+			groupedRows.set(row.sale_id, [row]);
+			continue;
+		}
+
+		groupedRows.set(row.sale_id, [...existingRows, row]);
+	}
+
+	return [...groupedRows.values()].map((productRows) => {
+		const [firstRow] = productRows;
+		const sortedRows = [...productRows].sort((left, right) => {
+			const unitDiff = left.unit_sequence - right.unit_sequence;
+
+			if (unitDiff !== 0) {
+				return unitDiff;
+			}
+
+			return left.stock_sequence - right.stock_sequence;
+		});
+
+		const variantSummaries = sortedRows.map((row) => ({
+			variant_id: row.stock_id,
+			unit_name: row.unit_name,
+			variant_name: row.stock_name,
+			nominal_price: toPriceString(toPriceNumber(row.nominal_price)),
+			current_price: toPriceString(toPriceNumber(row.real_price)),
+			available_quantity: row.quantity,
+			is_available: row.quantity > 0,
+		}));
+
+		const priceSummary = createPriceSummary(variantSummaries);
+		if (priceSummary === null) {
+			throw new Error(`Catalog product ${firstRow.sale_id} has no variants`);
+		}
+
+		return {
+			product_id: firstRow.sale_id,
+			snapshot_id: firstRow.snapshot_id,
+			title: firstRow.title,
+			price_summary: priceSummary,
+			stock_summary: createStockSummary(variantSummaries),
+			variant_summaries: variantSummaries,
+			latest_snapshot_created_at: toIsoString(firstRow.snapshot_created_at),
+			snapshot_content: {
+				format: firstRow.format,
+				body: firstRow.body,
+				revert_policy: firstRow.revert_policy,
+			},
+		};
+	});
+}
+
+function toCatalogListItem(product: CatalogProductDetail): CatalogProductListItem {
+	return {
+		product_id: product.product_id,
+		snapshot_id: product.snapshot_id,
+		title: product.title,
+		price_summary: product.price_summary,
+		stock_summary: product.stock_summary,
+		variant_summaries: product.variant_summaries,
+		latest_snapshot_created_at: product.latest_snapshot_created_at,
+	};
+}
+
+function sortCatalogProducts(
+	products: readonly CatalogProductListItem[],
+	sort: CatalogSort,
+): CatalogProductListItem[] {
+	return [...products].sort((left, right) => compareCatalogProducts(left, right, sort));
+}
+
 @Injectable()
 export class CatalogService {
-	public constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+	public constructor(@Inject(EntityManager) private readonly entityManager: EntityManager) {}
+
+	public async loadCatalogRows(options: CatalogRowsOptions = {}): Promise<CatalogRow[]> {
+		const clauses: string[] = [];
+		const params: string[] = [];
+
+		if (options.productId !== undefined) {
+			clauses.push('AND s.id = ?');
+			params.push(options.productId);
+		}
+
+		if (options.titleQuery !== undefined) {
+			clauses.push('AND LOWER(content.title) LIKE LOWER(?)');
+			params.push(`%${options.titleQuery}%`);
+		}
+
+		const query = `${BASE_CATALOG_SQL}
+			${clauses.join('\n')}
+		`;
+
+		const rows: CatalogRow[] = await this.entityManager.getConnection().execute<CatalogRow>(query, params, 'all');
+
+		return rows;
+	}
 
 	public async listProducts(query: CatalogListQuery): Promise<CatalogListResult> {
-		const sales = await loadCatalogSales(this.prisma);
-		const products = sales
-			.map(mapSaleToCatalogProduct)
-			.filter((product: CatalogProductDetail | null): product is CatalogProductDetail => product !== null)
-			.sort((left: CatalogProductDetail, right: CatalogProductDetail) =>
-				compareCatalogProducts(left, right, query.sort),
-			);
+		const products = sortCatalogProducts(
+			mapCatalogRows(await this.loadCatalogRows()).map(toCatalogListItem),
+			query.sort,
+		);
 
 		const offset = (query.page - 1) * query.limit;
 
 		return {
-			items: products.slice(offset, offset + query.limit).map(toCatalogListItem),
+			items: products.slice(offset, offset + query.limit),
 			total: products.length,
 		};
 	}
 
 	public async getProduct(productId: string): Promise<CatalogProductDetail> {
-		const sales = await this.prisma.sale.findMany({
-			where: {
-				id: productId,
-				...ACTIVE_SALE_FILTER,
-			},
-			include: {
-				snapshots: {
-					orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-					take: 1,
-					include: {
-						contents: {
-							orderBy: { id: 'asc' },
-						},
-						units: {
-							orderBy: [{ sequence: 'asc' }, { id: 'asc' }],
-							include: {
-								stocks: {
-									orderBy: [{ sequence: 'asc' }, { id: 'asc' }],
-								},
-							},
-						},
-					},
-				},
-			},
-		});
+		const [product] = mapCatalogRows(await this.loadCatalogRows({ productId }));
 
-		const product = sales
-			.map(mapSaleToCatalogProduct)
-			.find((value: CatalogProductDetail | null): value is CatalogProductDetail => value !== null);
 		if (product === undefined) {
 			throw new NotFoundError('Catalog product not found');
 		}
 
 		return product;
+	}
+
+	public async listAllProducts(sort: CatalogSort): Promise<CatalogProductListItem[]> {
+		return sortCatalogProducts(
+			mapCatalogRows(await this.loadCatalogRows()).map(toCatalogListItem),
+			sort,
+		);
 	}
 }

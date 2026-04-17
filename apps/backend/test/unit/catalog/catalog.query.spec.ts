@@ -1,4 +1,5 @@
-import { BadRequestError } from '../../../src/http/http-error';
+import { ERROR_CODES } from '../../../src/http/error-codes';
+import { HttpError } from '../../../src/http/http-error';
 
 import { DEFAULT_CATALOG_SORT, parseCatalogSort } from '../../../src/catalog/catalog.query';
 
@@ -14,6 +15,15 @@ describe('catalog query parsing', () => {
 	});
 
 	it('rejects unsupported sorting values', () => {
-		expect(() => parseCatalogSort('oldest')).toThrow(BadRequestError);
+		try {
+			parseCatalogSort('oldest');
+			throw new Error('Expected parseCatalogSort to throw for unsupported sorting value');
+		} catch (error) {
+			expect(error).toBeInstanceOf(HttpError);
+
+			if (error instanceof HttpError) {
+				expect(error.code).toBe(ERROR_CODES.VALIDATION_ERROR);
+			}
+		}
 	});
 });

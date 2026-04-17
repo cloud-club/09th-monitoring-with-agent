@@ -16,7 +16,7 @@ export class RequestContextController {
 		});
 	}
 
-	@Post('/cart/items')
+	@Post('/cart/context-check')
 	@UseGuards(BuyerAccessGuard)
 	public postCartItemContract(@Req() request: Request) {
 		return ok({

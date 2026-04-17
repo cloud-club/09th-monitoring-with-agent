@@ -1,4 +1,5 @@
-import { BadRequestError } from '../http/http-error';
+import { ERROR_CODES } from '../http/error-codes';
+import { HttpError } from '../http/http-error';
 
 import { CATALOG_SORT_VALUES } from './catalog.types';
 import type { CatalogSort } from './catalog.types';
@@ -15,7 +16,7 @@ export function parseCatalogSort(value: unknown): CatalogSort {
 	}
 
 	if (typeof value !== 'string') {
-		throw new BadRequestError('sort must be a string', {
+		throw new HttpError(400, ERROR_CODES.VALIDATION_ERROR, 'Request validation failed', {
 			issues: [{ path: 'sort', message: 'sort must be one of newest, price_asc, price_desc', value }],
 		});
 	}
@@ -25,7 +26,7 @@ export function parseCatalogSort(value: unknown): CatalogSort {
 		return normalized;
 	}
 
-	throw new BadRequestError('sort must be one of newest, price_asc, price_desc', {
+	throw new HttpError(400, ERROR_CODES.VALIDATION_ERROR, 'Request validation failed', {
 		issues: [{ path: 'sort', message: 'sort must be one of newest, price_asc, price_desc', value }],
 	});
 }

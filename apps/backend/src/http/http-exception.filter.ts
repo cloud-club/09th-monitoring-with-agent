@@ -13,6 +13,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
 		const response = context.getResponse<Response>();
 
 		if (exception instanceof HttpError) {
+			response.locals.log_error_code = exception.code;
 			response
 				.status(exception.statusCode)
 				.json(fail(exception.code, exception.message, exception.details));
@@ -23,16 +24,19 @@ export class HttpExceptionFilter implements ExceptionFilter {
 			const statusCode = exception.getStatus();
 
 			if (statusCode === HttpStatus.NOT_FOUND) {
+				response.locals.log_error_code = ERROR_CODES.NOT_FOUND;
 				response.status(statusCode).json(fail(ERROR_CODES.NOT_FOUND, 'Route not found'));
 				return;
 			}
 
 			if (statusCode === HttpStatus.BAD_REQUEST) {
+				response.locals.log_error_code = ERROR_CODES.BAD_REQUEST;
 				response.status(statusCode).json(fail(ERROR_CODES.BAD_REQUEST, 'Bad request'));
 				return;
 			}
 		}
 
+		response.locals.log_error_code = ERROR_CODES.INTERNAL_SERVER_ERROR;
 		response
 			.status(HttpStatus.INTERNAL_SERVER_ERROR)
 			.json(fail(ERROR_CODES.INTERNAL_SERVER_ERROR, 'Internal server error'));

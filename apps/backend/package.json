@@ -17,6 +17,7 @@
 		"test:unit": "vitest run --config test/vitest.unit.config.ts",
 		"test:integration": "vitest run --config test/vitest.integration.config.ts",
 		"test:e2e": "playwright test -c test/playwright.config.ts",
+		"test:e2e:smoke": "node scripts/run-seeded-smoke.mjs",
 		"test:integration:live": "vitest run --config test/vitest.live.config.ts",
 		"test:ci": "npm run test:policy && npm run typecheck && npm run test:unit && npm run test:integration && npm run test:e2e",
 		"benchmark:api": "node scripts/run-k6-benchmark.mjs benchmarks/api-benchmark.k6.js",
@@ -28,7 +29,7 @@
 		"db:migrate": "mikro-orm migration:up",
 		"db:migrate:dev": "mikro-orm migration:create",
 		"db:seed": "prisma db seed --schema prisma",
-		"db:reset:test": "prisma migrate reset --force --skip-generate --schema prisma",
+		"db:reset:test": "prisma db push --force-reset --skip-generate --schema prisma && npm run db:seed",
 		"db:assert:fixtures": "node test/fixtures/assert-deterministic-seed.js"
 	},
 	"prisma": {

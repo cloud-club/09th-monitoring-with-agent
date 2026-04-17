@@ -266,6 +266,7 @@ function buildPaymentAttemptFixtures() {
     {
       id: FIXTURE_IDS.paymentAttempts.success,
       orderId: FIXTURE_IDS.orders.paymentSuccess,
+      requestKey: 'req-seeded-success',
       status: 'succeeded',
       amount: '29800.00',
       failureCode: null
@@ -273,6 +274,7 @@ function buildPaymentAttemptFixtures() {
     {
       id: FIXTURE_IDS.paymentAttempts.failure,
       orderId: FIXTURE_IDS.orders.paymentFailure,
+      requestKey: 'req-seeded-failure',
       status: 'failed',
       amount: '59000.00',
       failureCode: 'CARD_DECLINED'
