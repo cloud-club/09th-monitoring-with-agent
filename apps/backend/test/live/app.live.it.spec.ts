@@ -12,12 +12,12 @@ describe('backend live integration', () => {
 	it('checks a real backend target through the public health endpoint', async () => {
 		const liveBaseUrl = process.env.BACKEND_LIVE_BASE_URL;
 
-		if (!liveBaseUrl) {
+		if (liveBaseUrl === undefined || liveBaseUrl.length === 0) {
 			throw new Error('BACKEND_LIVE_BASE_URL is required when LIVE_TEST=true');
 		}
 
 		const response = await fetch(`${liveBaseUrl.replace(/\/$/, '')}/health`);
-		const body = await response.json();
+		const body: unknown = await response.json();
 
 		expect(response.status).toBe(200);
 		expect(body).toMatchObject({
