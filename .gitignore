@@ -12,3 +12,4 @@ monitoring/data/
 
 # local planning / agent artifacts
 .sisyphus/
+.playwright-mcp/
