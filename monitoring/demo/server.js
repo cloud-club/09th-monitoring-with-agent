@@ -11,6 +11,50 @@ const LOG_DIR = process.env.LOG_DIR || "/app/logs";
 const LOG_ACCESS = path.join(LOG_DIR, "mwa-access.log");
 const LOG_APP = path.join(LOG_DIR, "mwa-app.log");
 const SCENARIO_BACKEND_BASE_URL = process.env.SCENARIO_BACKEND_BASE_URL || process.env.BACKEND_BASE_URL || "http://127.0.0.1:8080";
+const MONITORING_PROMETHEUS_BASE_URL = process.env.MONITORING_PROMETHEUS_BASE_URL || "http://127.0.0.1:9090";
+const MONITORING_LOKI_BASE_URL = process.env.MONITORING_LOKI_BASE_URL || "http://127.0.0.1:3100";
+const MONITORING_GRAFANA_BASE_URL = process.env.MONITORING_GRAFANA_BASE_URL || "http://127.0.0.1:3000";
+
+const KPI_RESULT_LABELS = Object.freeze({
+  success: "success",
+  failure: "failure",
+});
+
+const KPI_DRILLDOWN_TARGETS = Object.freeze({
+  prometheus: "prometheus",
+  loki: "loki",
+  grafana: "grafana",
+});
+
+const KPI_TELEMETRY_ENDPOINTS = Object.freeze([
+  Object.freeze({ metricFamily: "mwa_search_requests_total", eventNames: ["search.executed"] }),
+  Object.freeze({ metricFamily: "mwa_http_requests_total", metricText: 'handler="/api/catalog/products/:productId"', eventNames: ["product.detail_viewed"] }),
+  Object.freeze({ metricFamily: "mwa_cart_add_total", eventNames: ["cart.item_added"] }),
+  Object.freeze({ metricFamily: "mwa_order_create_total", eventNames: ["order.created"] }),
+  Object.freeze({ metricFamily: "mwa_payment_attempt_total", eventNames: ["payment.started", "payment.failed", "payment.succeeded"] }),
+]);
+
+const KPI_ALERT_RULES = Object.freeze({
+  payment: ["PaymentFailureSpike"],
+  order: ["OrderCreateFailures"],
+  api: ["APIHighErrorRate", "APIHighLatencyP95"],
+});
+
+const KPI_STATE = {
+  scenarioRunsTotal: 0,
+  scenarioRunsPassed: 0,
+  summaryGenerationsTotal: 0,
+  summaryGenerationsSucceeded: 0,
+  drilldownChecksTotal: 0,
+  drilldownChecksSucceeded: 0,
+  alertCoverageChecksTotal: 0,
+  alertCoverageChecksSucceeded: 0,
+  actionableIncidentChecksTotal: 0,
+  actionableIncidentChecksSucceeded: 0,
+  falsePositiveRunsTotal: 0,
+};
+
+let currentTelemetryCompletenessRatio = 0;
 
 /**
  * 데모용 고정 상품(카탈로그).
@@ -1069,6 +1113,262 @@ async function executeScenario(scenario) {
   };
 }
 
+function clampRatio(numerator, denominator) {
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
+    return 0;
+  }
+
+  return numerator / denominator;
+}
+
+function getScenarioStepPaths(scenario) {
+  return Array.isArray(scenario?.steps)
+    ? scenario.steps
+      .map((step) => (typeof step?.path === "string" ? step.path : null))
+      .filter((stepPath) => stepPath !== null)
+    : [];
+}
+
+function getExpectedAlertNames(scenario, run) {
+  const alertNames = new Set();
+  const scenarioText = JSON.stringify({
+    name: scenario?.name,
+    steps: getScenarioStepPaths(scenario),
+  }).toLowerCase();
+
+  if (scenarioText.includes("payment")) {
+    KPI_ALERT_RULES.payment.forEach((alertName) => {
+      alertNames.add(alertName);
+    });
+  }
+
+  if (scenarioText.includes("/api/orders") || scenarioText.includes("order")) {
+    KPI_ALERT_RULES.order.forEach((alertName) => {
+      alertNames.add(alertName);
+    });
+  }
+
+  if (
+    scenarioText.includes("search")
+    || scenarioText.includes("catalog")
+    || scenarioText.includes("health")
+    || scenarioText.includes("metrics")
+    || scenarioText.includes("route-that-does-not-exist")
+  ) {
+    KPI_ALERT_RULES.api.forEach((alertName) => {
+      alertNames.add(alertName);
+    });
+  }
+
+  if (run?.summary?.passed === false && alertNames.size === 0) {
+    KPI_ALERT_RULES.api.forEach((alertName) => {
+      alertNames.add(alertName);
+    });
+  }
+
+  return [...alertNames];
+}
+
+async function safeFetchText(url) {
+  try {
+    const response = await fetch(url);
+    return {
+      ok: response.ok,
+      body: await response.text(),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      body: error instanceof Error ? error.message : "Unknown fetch failure",
+    };
+  }
+}
+
+async function safeFetchJson(url) {
+  try {
+    const response = await fetch(url);
+    return {
+      ok: response.ok,
+      body: await response.json(),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      body: null,
+      error: error instanceof Error ? error.message : "Unknown fetch failure",
+    };
+  }
+}
+
+async function probeDrilldownTargets() {
+  const probes = [
+    { target: KPI_DRILLDOWN_TARGETS.prometheus, url: `${MONITORING_PROMETHEUS_BASE_URL}/api/v1/query?query=up` },
+    { target: KPI_DRILLDOWN_TARGETS.loki, url: `${MONITORING_LOKI_BASE_URL}/ready` },
+    { target: KPI_DRILLDOWN_TARGETS.grafana, url: `${MONITORING_GRAFANA_BASE_URL}/api/health` },
+  ];
+
+  return Promise.all(probes.map(async (probe) => {
+    const response = await safeFetchText(probe.url);
+    return { target: probe.target, success: response.ok };
+  }));
+}
+
+function extractPrometheusAlertNames(payload) {
+  const groups = Array.isArray(payload?.data?.groups) ? payload.data.groups : [];
+  return groups.flatMap((group) => (
+    Array.isArray(group.rules)
+      ? group.rules.map((rule) => String(rule.name || "")).filter((name) => name.length > 0)
+      : []
+  ));
+}
+
+function extractActiveAlertNames(payload) {
+  const alerts = Array.isArray(payload?.data?.alerts) ? payload.data.alerts : [];
+  return alerts
+    .map((alert) => String(alert?.labels?.alertname || ""))
+    .filter((name) => name.length > 0);
+}
+
+async function probeAlertCoverage(expectedAlertNames) {
+  if (expectedAlertNames.length === 0) {
+    return false;
+  }
+
+  const [rulesResponse, alertsResponse] = await Promise.all([
+    safeFetchJson(`${MONITORING_PROMETHEUS_BASE_URL}/api/v1/rules`),
+    safeFetchJson(`${MONITORING_PROMETHEUS_BASE_URL}/api/v1/alerts`),
+  ]);
+
+  const discoveredAlertNames = new Set([
+    ...extractPrometheusAlertNames(rulesResponse.body),
+    ...extractActiveAlertNames(alertsResponse.body),
+  ]);
+
+  return expectedAlertNames.some((alertName) => discoveredAlertNames.has(alertName));
+}
+
+async function probeFalsePositiveAlert(run) {
+  if (run?.summary?.passed !== true) {
+    return false;
+  }
+
+  const alertsResponse = await safeFetchJson(`${MONITORING_PROMETHEUS_BASE_URL}/api/v1/alerts`);
+  const activeAlertNames = new Set(extractActiveAlertNames(alertsResponse.body));
+
+  return [
+    ...KPI_ALERT_RULES.api,
+    ...KPI_ALERT_RULES.order,
+    ...KPI_ALERT_RULES.payment,
+  ].some((alertName) => activeAlertNames.has(alertName));
+}
+
+function hasRequiredMetricFamily(metricsText, telemetryTarget) {
+  if (!metricsText.includes(telemetryTarget.metricFamily)) {
+    return false;
+  }
+
+  return typeof telemetryTarget.metricText === "string"
+    ? metricsText.includes(telemetryTarget.metricText)
+    : true;
+}
+
+function hasRequiredLogEvent(logBody, telemetryTarget) {
+  return telemetryTarget.eventNames.some((eventName) => logBody.includes(eventName));
+}
+
+async function probeTelemetryCompleteness() {
+  const [metricsResponse, logQueryResponse] = await Promise.all([
+    safeFetchText(`${SCENARIO_BACKEND_BASE_URL}/metrics`),
+    safeFetchJson(`${MONITORING_LOKI_BASE_URL}/loki/api/v1/query?query=${encodeURIComponent('{job="backend-file", service_name="mwa-backend"} |= "event_name"')}`),
+  ]);
+
+  const metricsText = metricsResponse.ok ? metricsResponse.body : "";
+  const logBody = logQueryResponse.ok ? JSON.stringify(logQueryResponse.body) : "";
+  const successfulEndpoints = KPI_TELEMETRY_ENDPOINTS.filter((telemetryTarget) => (
+    hasRequiredMetricFamily(metricsText, telemetryTarget) && hasRequiredLogEvent(logBody, telemetryTarget)
+  )).length;
+
+  return clampRatio(successfulEndpoints, KPI_TELEMETRY_ENDPOINTS.length);
+}
+
+function updateKpiGauges() {
+  falsePositiveAlertRatio.set(clampRatio(KPI_STATE.falsePositiveRunsTotal, KPI_STATE.scenarioRunsTotal));
+  telemetryCompletenessRatio.set(currentTelemetryCompletenessRatio);
+  drilldownSuccessRatio.set(clampRatio(KPI_STATE.drilldownChecksSucceeded, KPI_STATE.drilldownChecksTotal));
+  summaryGenerationSuccessRatio.set(clampRatio(KPI_STATE.summaryGenerationsSucceeded, KPI_STATE.summaryGenerationsTotal));
+  actionableIncidentCoverageRatio.set(clampRatio(KPI_STATE.actionableIncidentChecksSucceeded, KPI_STATE.actionableIncidentChecksTotal));
+  scenarioReproductionRatio.set(clampRatio(KPI_STATE.scenarioRunsPassed, KPI_STATE.scenarioRunsTotal));
+}
+
+async function updateMonitoringKpis(scenario, run) {
+  KPI_STATE.scenarioRunsTotal += 1;
+  const scenarioRunSucceeded = run?.summary?.passed === true;
+  if (scenarioRunSucceeded) {
+    KPI_STATE.scenarioRunsPassed += 1;
+  }
+  scenarioRunsTotal.inc({
+    result: scenarioRunSucceeded ? KPI_RESULT_LABELS.success : KPI_RESULT_LABELS.failure,
+  });
+
+  KPI_STATE.summaryGenerationsTotal += 1;
+  const summaryGenerationSucceeded = Boolean(run?.summary && typeof run.summary.passed === "boolean");
+  if (summaryGenerationSucceeded) {
+    KPI_STATE.summaryGenerationsSucceeded += 1;
+  }
+  summaryGenerationsTotal.inc({
+    result: summaryGenerationSucceeded ? KPI_RESULT_LABELS.success : KPI_RESULT_LABELS.failure,
+  });
+
+  const drilldownResults = await probeDrilldownTargets();
+  drilldownResults.forEach((probe) => {
+    KPI_STATE.drilldownChecksTotal += 1;
+    if (probe.success) {
+      KPI_STATE.drilldownChecksSucceeded += 1;
+    }
+    drilldownChecksTotal.inc({
+      target: probe.target,
+      result: probe.success ? KPI_RESULT_LABELS.success : KPI_RESULT_LABELS.failure,
+    });
+  });
+
+  const failedScenario = run?.summary?.passed === false;
+  const alertCoverageSucceeded = failedScenario
+    ? await probeAlertCoverage(getExpectedAlertNames(scenario, run))
+    : false;
+
+  if (failedScenario) {
+    KPI_STATE.alertCoverageChecksTotal += 1;
+    if (alertCoverageSucceeded) {
+      KPI_STATE.alertCoverageChecksSucceeded += 1;
+    }
+    alertCoverageChecksTotal.inc({
+      result: alertCoverageSucceeded ? KPI_RESULT_LABELS.success : KPI_RESULT_LABELS.failure,
+    });
+  }
+
+  const actionableIncidentSucceeded = failedScenario
+    && alertCoverageSucceeded
+    && drilldownResults.every((probe) => probe.success)
+    && summaryGenerationSucceeded;
+
+  if (failedScenario) {
+    KPI_STATE.actionableIncidentChecksTotal += 1;
+    if (actionableIncidentSucceeded) {
+      KPI_STATE.actionableIncidentChecksSucceeded += 1;
+    }
+    actionableIncidentChecksTotal.inc({
+      result: actionableIncidentSucceeded ? KPI_RESULT_LABELS.success : KPI_RESULT_LABELS.failure,
+    });
+  }
+
+  if (await probeFalsePositiveAlert(run)) {
+    KPI_STATE.falsePositiveRunsTotal += 1;
+  }
+
+  currentTelemetryCompletenessRatio = await probeTelemetryCompleteness();
+  updateKpiGauges();
+}
+
 function renderScenarioPage() {
   const templatesJson = escapeForInlineScript(SCENARIO_TEMPLATES);
   const defaultTemplateId = SCENARIO_TEMPLATES[0]?.id || "";
@@ -1750,6 +2050,91 @@ const productOrders = new client.Counter({
   registers: [register],
 });
 
+const summaryGenerationsTotal = new client.Counter({
+  name: "mwa_monitoring_summary_generations_total",
+  help: "시나리오 실행 후 summary 생성 결과 누적 수",
+  labelNames: ["result"],
+  registers: [register],
+});
+
+const scenarioRunsTotal = new client.Counter({
+  name: "mwa_monitoring_scenario_runs_total",
+  help: "시나리오 실행 결과 누적 수",
+  labelNames: ["result"],
+  registers: [register],
+});
+
+const drilldownChecksTotal = new client.Counter({
+  name: "mwa_monitoring_drilldown_checks_total",
+  help: "Prometheus/Loki/Grafana 드릴다운 프로브 결과 누적 수",
+  labelNames: ["target", "result"],
+  registers: [register],
+});
+
+const alertCoverageChecksTotal = new client.Counter({
+  name: "mwa_monitoring_alert_coverage_checks_total",
+  help: "실패 시나리오 alert coverage 점검 결과 누적 수",
+  labelNames: ["result"],
+  registers: [register],
+});
+
+const actionableIncidentChecksTotal = new client.Counter({
+  name: "mwa_monitoring_actionable_incident_checks_total",
+  help: "행동 가능한 인시던트 coverage 점검 결과 누적 수",
+  labelNames: ["result"],
+  registers: [register],
+});
+
+const falsePositiveAlertRatio = new client.Gauge({
+  name: "mwa_monitoring_false_positive_alert_ratio",
+  help: "passed summary 대비 false positive alert 비율",
+  registers: [register],
+});
+
+const telemetryCompletenessRatio = new client.Gauge({
+  name: "mwa_monitoring_telemetry_completeness_ratio",
+  help: "핵심 endpoint 텔레메트리 완전성 비율",
+  registers: [register],
+});
+
+const drilldownSuccessRatio = new client.Gauge({
+  name: "mwa_monitoring_drilldown_success_ratio",
+  help: "드릴다운 프로브 성공 비율",
+  registers: [register],
+});
+
+const summaryGenerationSuccessRatio = new client.Gauge({
+  name: "mwa_monitoring_summary_generation_success_ratio",
+  help: "summary 생성 성공 비율",
+  registers: [register],
+});
+
+const actionableIncidentCoverageRatio = new client.Gauge({
+  name: "mwa_monitoring_actionable_incident_coverage_ratio",
+  help: "행동 가능한 인시던트 coverage 비율",
+  registers: [register],
+});
+
+const scenarioReproductionRatio = new client.Gauge({
+  name: "mwa_monitoring_scenario_reproduction_ratio",
+  help: "시나리오 재현 성공 비율",
+  registers: [register],
+});
+
+summaryGenerationsTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
+summaryGenerationsTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
+scenarioRunsTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
+scenarioRunsTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
+Object.values(KPI_DRILLDOWN_TARGETS).forEach((target) => {
+  drilldownChecksTotal.inc({ target, result: KPI_RESULT_LABELS.success }, 0);
+  drilldownChecksTotal.inc({ target, result: KPI_RESULT_LABELS.failure }, 0);
+});
+alertCoverageChecksTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
+alertCoverageChecksTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
+actionableIncidentChecksTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
+actionableIncidentChecksTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
+updateKpiGauges();
+
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -1817,6 +2202,7 @@ app.post("/qa/scenarios/run", async (req, res) => {
   }
 
   const run = await executeScenario(scenario);
+  await updateMonitoringKpis(scenario, run);
   res.json({
     success: true,
     run,
