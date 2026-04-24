@@ -24,10 +24,12 @@ export type RequestContext = {
 export type RequestTelemetryContext = {
 	readonly requestId: string;
 	readonly userRole: RequestUserRole;
+	readonly traceId?: string;
 	readonly customerId?: string;
 };
 
 const requestContextStore = new WeakMap<Request, RequestContext>();
+const requestTraceIdStore = new WeakMap<Request, string>();
 
 export function createAnonymousRequestContext(requestId: string): RequestContext {
 	return {
@@ -67,11 +69,13 @@ export function getRequestContext(request: Request): RequestContext {
 
 export function getRequestTelemetryContext(request: Request): RequestTelemetryContext {
 	const requestContext = getRequestContext(request);
+	const traceId = requestTraceIdStore.get(request);
 
 	if (requestContext.actor.type === 'buyer') {
 		return {
 			requestId: requestContext.requestId,
 			userRole: 'buyer',
+			traceId,
 			customerId: requestContext.actor.customerId,
 		};
 	}
@@ -79,7 +83,12 @@ export function getRequestTelemetryContext(request: Request): RequestTelemetryCo
 	return {
 		requestId: requestContext.requestId,
 		userRole: 'anonymous',
+		traceId,
 	};
+}
+
+export function setRequestTraceId(request: Request, traceId: string): void {
+	requestTraceIdStore.set(request, traceId);
 }
 
 export function getHeaderValue(value: string | string[] | undefined): string | undefined {

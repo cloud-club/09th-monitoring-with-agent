@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import process from 'node:process';
 
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -19,6 +20,7 @@ const NOTEBOOK_PRODUCT = '77777777-7777-4777-8777-777777777771';
 const NOTEBOOK_VARIANT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const ORDER_SUCCESS = '55555555-5555-4555-8555-555555555551';
 const ORDER_FAILURE = '55555555-5555-4555-8555-555555555552';
+const TRACE_ID_PATTERN = /^[0-9a-f]{32}$/;
 
 type LogRecord = Record<string, string | number | boolean | null>;
 
@@ -53,7 +55,7 @@ describe('structured logging integration behavior', () => {
 		process.env.LOG_DIR = logDir;
 		process.env.NODE_ENV = 'test';
 
-		stdoutSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+		stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true) as unknown as ReturnType<typeof vi.spyOn>;
 
 		const { AppModule } = await import('../app.module');
 		const testingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -90,7 +92,8 @@ describe('structured logging integration behavior', () => {
 
 		const stdoutLines = activeStdoutSpy.mock.calls
 			.map((call: unknown[]) => call[0])
-			.filter((line): line is string => typeof line === 'string' && line.startsWith('{'));
+			.filter((line): line is string => typeof line === 'string' && line.startsWith('{'))
+			.map((line: string) => line.trim());
 		const fileLines = readFileSync(join(logDir, 'mwa-app.log'), 'utf8')
 			.split('\n')
 			.map((line: string) => line.trim())
@@ -110,10 +113,15 @@ describe('structured logging integration behavior', () => {
 			expect(record.endpoint).toEqual(expect.any(String));
 			expect(record.method).toEqual(expect.any(String));
 			expect(record.result).toEqual(expect.any(String));
+			if (record.request_id !== 'system' && typeof record.event_name !== 'string') {
+				expect(record.duration_ms).toEqual(expect.any(Number));
+			}
 		}
 
 		expect(records.filter((record: LogRecord) => record.request_id === 'request-success-001')).toHaveLength(2);
 		expect(records.filter((record: LogRecord) => record.request_id === 'request-failure-001')).toHaveLength(2);
+		expect(records.find((record: LogRecord) => record.request_id === 'request-success-001')?.trace_id).toMatch(TRACE_ID_PATTERN);
+		expect(records.find((record: LogRecord) => record.request_id === 'request-failure-001')?.trace_id).toMatch(TRACE_ID_PATTERN);
 	});
 
 	it('emits the required domain event names with structured request-correlated payloads', async () => {
@@ -158,7 +166,9 @@ describe('structured logging integration behavior', () => {
 
 		const records = readJsonLines(join(logDir, 'mwa-app.log'));
 		const domainEvents = records.filter((record: LogRecord) => typeof record.event_name === 'string');
-		const eventNames = new Set(domainEvents.map((record: LogRecord) => record.event_name));
+		const heartbeatEvents = domainEvents.filter((record: LogRecord) => record.event_name === 'monitoring.log_heartbeat');
+		const requestDomainEvents = domainEvents.filter((record: LogRecord) => record.event_name !== 'monitoring.log_heartbeat');
+		const eventNames = new Set(requestDomainEvents.map((record: LogRecord) => record.event_name));
 
 		expect(eventNames).toEqual(new Set([
 			'product.list_viewed',
@@ -173,17 +183,28 @@ describe('structured logging integration behavior', () => {
 			'payment.failed',
 		]));
 
-		for (const record of domainEvents) {
+		for (const record of requestDomainEvents) {
 			expect(record.request_id).toEqual(expect.any(String));
+			expect(record.trace_id).toMatch(TRACE_ID_PATTERN);
 			expect(record.endpoint).toEqual(expect.any(String));
 			expect(record.method).toEqual(expect.any(String));
 			expect(record.result).toEqual(expect.any(String));
 		}
 
-		expect(domainEvents.find((record: LogRecord) => record.event_name === 'product.detail_viewed')?.product_id).toBe(NOTEBOOK_PRODUCT);
-		expect(domainEvents.find((record: LogRecord) => record.event_name === 'cart.item_added')?.variant_id).toBe(NOTEBOOK_VARIANT);
-		expect(domainEvents.find((record: LogRecord) => record.event_name === 'order.created')?.cart_id).toEqual(expect.any(String));
-		expect(domainEvents.find((record: LogRecord) => record.event_name === 'payment.succeeded')?.payment_id).toEqual(expect.any(String));
-		expect(domainEvents.find((record: LogRecord) => record.event_name === 'payment.failed')?.error_code).toBe('CARD_DECLINED');
+		expect(heartbeatEvents.length).toBeGreaterThanOrEqual(1);
+		for (const record of heartbeatEvents) {
+			expect(record.request_id).toBe('system');
+			expect(record.endpoint).toBe('system');
+			expect(record.method).toBe('SYSTEM');
+			expect(record.result).toBe('heartbeat');
+			expect(record.user_role).toBe('anonymous');
+			expect(record.heartbeat_interval_ms).toBe(15000);
+		}
+
+		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'product.detail_viewed')?.product_id).toBe(NOTEBOOK_PRODUCT);
+		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'cart.item_added')?.variant_id).toBe(NOTEBOOK_VARIANT);
+		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'order.created')?.cart_id).toEqual(expect.any(String));
+		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'payment.succeeded')?.payment_id).toEqual(expect.any(String));
+		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'payment.failed')?.error_code).toBe('CARD_DECLINED');
 	});
 });
