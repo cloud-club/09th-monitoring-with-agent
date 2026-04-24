@@ -16,6 +16,10 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/rules/mwa-sli.rules.yml
+  - /etc/prometheus/rules/mwa-alerts.rules.yml
+
 scrape_configs:
   # cAdvisor 응답이 크고 느릴 수 있어 타임아웃·간격을 넉넉히(스크랩 실패 시 Targets 에 DOWN)
   - job_name: cadvisor
@@ -42,6 +46,21 @@ scrape_configs:
       - targets: ["mwa-backend:8080"]
         labels:
           app: mwa
+
+  - job_name: mwa-demo
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mwa-demo:8080"]
+        labels:
+          app: mwa-demo
+
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]
 
   # Docker 밖 호스트에서 뜬 앱(예: systemd로 직접 실행)을 스크랩할 때:
   # 1) 호스트에서 메트릭 포트 열기

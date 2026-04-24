@@ -2,7 +2,7 @@ name: mwa
 
 # 실행(모니터링 폴더에서): export USER_ID=$(id -u) && docker compose up -d --build
 # 실행(루트에서): export USER_ID=$(id -u) && docker compose -f monitoring/docker-compose.yml up -d --build
-# 포트: 8080 backend · 8081 demo/qa scenarios · 3000 Grafana · 9090 Prometheus · 3100 Loki · 9100 node_exporter · 8088 cAdvisor(컨테이너 메트릭)
+# 포트: 8080 backend · 8081 demo/qa scenarios · 3000 Grafana · 9090 Prometheus · 3100 Loki · 3200 Tempo · 9100 node_exporter · 8088 cAdvisor(컨테이너 메트릭)
 # 앱 로그(stdout vs 파일) 합치는 법 → README「애플리케이션 로그 연동」
 
 services:
@@ -14,6 +14,8 @@ services:
     environment:
       - HOST=0.0.0.0
       - DATABASE_URL=postgresql://mwa:mwa@postgres:5432/mwa?schema=public
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
+      - OTEL_SERVICE_NAME=mwa-backend
     ports:
       - "8080:8080"
     volumes:
@@ -22,6 +24,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      tempo:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 10s
@@ -68,6 +72,13 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres/init:/docker-entrypoint-initdb.d:ro
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mwa -d mwa"]
@@ -96,6 +107,7 @@ services:
     depends_on:
       - prometheus
       - loki
+      - tempo
     networks:
       - loki
 
@@ -110,6 +122,20 @@ services:
       - "3100:3100"
     restart: unless-stopped
     command: -config.file=/etc/loki/loki-config.yml
+    networks:
+      - loki
+
+  tempo:
+    container_name: mwa-tempo
+    image: grafana/tempo:2.5.0
+    volumes:
+      - ./config/tempo:/etc/tempo:ro
+      - ./data/tempo:/tmp/tempo
+    ports:
+      - "3200:3200"
+      - "4318:4318"
+    restart: unless-stopped
+    command: -config.file=/etc/tempo/tempo.yml
     networks:
       - loki
 
@@ -144,6 +170,22 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+
+  postgres-exporter:
+    container_name: mwa-postgres-exporter
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      - DATA_SOURCE_NAME=postgresql://mwa:mwa@postgres:5432/mwa?sslmode=disable
+    command:
+      - "--collector.stat_statements"
+    ports:
+      - "9187:9187"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - loki
 
   # 컨테이너별 CPU·메모리 등. Docker Desktop 에선 cgroup/경로 제한으로 지표가 비거나 늦게 뜰 수 있음 → README 트러블슈팅 참고.
   cadvisor:

@@ -1,0 +1,62 @@
+groups:
+  - name: mwa-alert-rules
+    rules:
+      - alert: ServiceDown
+        expr: up{job="mwa-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+
+      - alert: APIHighErrorRate
+        expr: mwa:http_5xx_ratio:5m > 0.03
+        for: 5m
+        labels:
+          severity: critical
+
+      - alert: APIHighLatencyP95
+        expr: mwa:http_latency_p95_seconds:5m > 1
+        for: 5m
+        labels:
+          severity: warning
+
+      - alert: OrderCreateFailures
+        expr: sum(increase(mwa_order_create_total{result!="success"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: critical
+
+      - alert: PaymentFailureSpike
+        expr: (1 - mwa:payment_completion_ratio:5m) > 0.10
+        for: 5m
+        labels:
+          severity: critical
+
+      - alert: LowApdexScore
+        expr: mwa:apdex_score:5m < 0.85
+        for: 10m
+        labels:
+          severity: warning
+
+      - alert: SaturationWarningSummary
+        expr: mwa:saturation_warning_score:5m > 0
+        for: 10m
+        labels:
+          severity: warning
+
+      - alert: BusinessImpactDegraded
+        expr: mwa:business_impact_status:5m < 1
+        for: 10m
+        labels:
+          severity: warning
