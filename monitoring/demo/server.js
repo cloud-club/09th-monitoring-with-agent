@@ -1070,9 +1070,10 @@ async function executeScenarioStep(step, context) {
 async function executeScenario(scenario) {
   const mode = scenario.mode;
   const steps = scenario.steps;
+  const runId = crypto.randomUUID();
   const context = {
     runtime: {
-      runId: crypto.randomUUID(),
+      runId,
     },
     steps: {},
   };
@@ -1099,6 +1100,7 @@ async function executeScenario(scenario) {
   const failedSteps = results.length - passedSteps;
 
   return {
+    runId,
     scenarioName: scenario.name || "Custom scenario",
     mode,
     backendBaseUrl: SCENARIO_BACKEND_BASE_URL,
@@ -1370,12 +1372,15 @@ async function updateMonitoringKpis(scenario, run) {
 }
 
 function renderScenarioPage() {
-  const templatesJson = escapeForInlineScript(SCENARIO_TEMPLATES);
-  const defaultTemplateId = SCENARIO_TEMPLATES[0]?.id || "";
-  const monitoringLinksJson = escapeForInlineScript({
-    prometheus: MONITORING_PROMETHEUS_BASE_URL,
-    loki: MONITORING_LOKI_BASE_URL,
-    grafana: MONITORING_GRAFANA_BASE_URL,
+  const bootstrapJson = escapeForInlineScript({
+    templates: SCENARIO_TEMPLATES,
+    defaultTemplateId: SCENARIO_TEMPLATES[0]?.id || "",
+    monitoringLinks: {
+      prometheus: MONITORING_PROMETHEUS_BASE_URL,
+      loki: MONITORING_LOKI_BASE_URL,
+      grafana: MONITORING_GRAFANA_BASE_URL,
+    },
+    backendBaseUrl: SCENARIO_BACKEND_BASE_URL,
   });
 
   return `<!DOCTYPE html>
@@ -1384,408 +1389,7 @@ function renderScenarioPage() {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Scenario Testing Web</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
-    :root {
-      color-scheme: dark;
-      --bg: #101216;
-      --surface: #181c22;
-      --surface-2: #202630;
-      --surface-3: #11151b;
-      --border: #343c48;
-      --border-strong: #566273;
-      --text: #f4f7fb;
-      --muted: #9aa7b8;
-      --green: #2dd36f;
-      --green-2: #1fb95c;
-      --red: #ff6b6b;
-      --amber: #f4bf45;
-      --blue: #5bb8ff;
-      --violet: #b69cff;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: 'IBM Plex Sans', system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      padding: 20px;
-    }
-    a { color: var(--blue); }
-    code, pre, textarea, .mono { font-family: 'JetBrains Mono', monospace; }
-    .shell {
-      max-width: 1520px;
-      margin: 0 auto;
-      display: grid;
-      gap: 14px;
-    }
-    .app-header {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid var(--border);
-      padding: 0 0 14px;
-    }
-    .title-block {
-      display: grid;
-      gap: 4px;
-    }
-    .title-block h1 {
-      margin: 0;
-      font-size: 22px;
-      line-height: 1.2;
-      letter-spacing: 0;
-    }
-    .title-block p {
-      margin: 0;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.45;
-    }
-    .header-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: flex-end;
-    }
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      min-height: 28px;
-      border: 1px solid var(--border);
-      background: var(--surface-2);
-      color: #d7e2ef;
-      border-radius: 6px;
-      padding: 5px 9px;
-      font-size: 12px;
-      white-space: nowrap;
-    }
-    .layout {
-      display: grid;
-      grid-template-columns: 312px minmax(0, 1fr) 420px;
-      gap: 14px;
-      align-items: start;
-    }
-    .sidebar, .workspace, .inspector {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      gap: 14px;
-      min-width: 0;
-    }
-    .panel {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 14px;
-      min-width: 0;
-    }
-    .panel h2, .panel h3 { margin: 0 0 8px; font-size: 15px; letter-spacing: 0; }
-    .panel p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
-    .panel-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: start;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-    .template-list {
-      display: grid;
-      gap: 10px;
-      max-height: calc(100vh - 208px);
-      overflow: auto;
-      padding-right: 2px;
-    }
-    .template-group {
-      display: grid;
-      gap: 8px;
-    }
-    .template-group + .template-group {
-      margin-top: 6px;
-      padding-top: 10px;
-      border-top: 1px solid var(--border);
-    }
-    .template-group-title {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin: 0;
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #cbd5e1;
-    }
-    .template-group-count {
-      color: var(--muted);
-      font-size: 11px;
-      letter-spacing: 0.02em;
-    }
-    .template-card {
-      width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--surface-3);
-      color: var(--text);
-      text-align: left;
-      padding: 11px;
-      cursor: pointer;
-      transition: border-color 160ms ease, background-color 160ms ease;
-    }
-    .template-card:hover,
-    .template-card:focus-visible {
-      border-color: var(--blue);
-      background: #172232;
-      outline: none;
-    }
-    .template-card.is-active {
-      border-color: var(--green);
-      background: #15271e;
-    }
-    .template-card strong {
-      display: block;
-      margin-bottom: 5px;
-      font-size: 15px;
-    }
-    .template-meta {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      margin-top: 9px;
-    }
-    .template-meta span {
-      border: 1px solid var(--border);
-      border-radius: 5px;
-      color: #cbd5e1;
-      font-size: 11px;
-      padding: 3px 6px;
-    }
-    .editor-toolbar, .result-toolbar {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 12px;
-    }
-    .button-row {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    button {
-      border: none;
-      border-radius: 7px;
-      padding: 9px 12px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background-color 160ms ease, border-color 160ms ease, opacity 160ms ease;
-    }
-    button:disabled { cursor: progress; opacity: 0.65; }
-    button:hover,
-    button:focus-visible {
-      outline: none;
-    }
-    .button-primary { background: var(--green); color: #07170d; }
-    .button-primary:hover, .button-primary:focus-visible { background: var(--green-2); color: white; }
-    .button-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong); }
-    .button-secondary:hover, .button-secondary:focus-visible { background: #293241; }
-    .button-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
-    .button-ghost:hover, .button-ghost:focus-visible { background: var(--surface-2); color: var(--text); }
-    textarea {
-      width: 100%;
-      min-height: 560px;
-      resize: vertical;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: #0b0f14;
-      color: var(--text);
-      padding: 14px;
-      font-size: 13px;
-      line-height: 1.6;
-    }
-    textarea:focus {
-      outline: 2px solid rgba(91, 184, 255, 0.25);
-      border-color: var(--blue);
-    }
-    .status-line {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: center;
-      margin-top: 10px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .status-pill {
-      border-radius: 6px;
-      padding: 5px 8px;
-      font-size: 12px;
-      font-weight: 600;
-    }
-    .status-valid { background: rgba(45, 211, 111, 0.14); color: #bff6d2; }
-    .status-invalid { background: rgba(255, 107, 107, 0.14); color: #ffd2d2; }
-    .status-running { background: rgba(244, 191, 69, 0.14); color: #ffe7a3; }
-    .error-list {
-      margin: 12px 0 0;
-      padding-left: 18px;
-      color: #ffd2d2;
-      display: grid;
-      gap: 6px;
-    }
-    .summary-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    .summary-card {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--surface-3);
-      padding: 10px;
-    }
-    .summary-card strong {
-      display: block;
-      font-size: 22px;
-      margin-top: 4px;
-    }
-    .result-list {
-      display: grid;
-      gap: 10px;
-      max-height: calc(100vh - 268px);
-      overflow: auto;
-      padding-right: 2px;
-    }
-    .result-card {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--surface-3);
-      overflow: hidden;
-    }
-    .result-head {
-      padding: 12px;
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-      border-bottom: 1px solid var(--border);
-    }
-    .result-pass { border-left: 4px solid var(--green); }
-    .result-fail { border-left: 4px solid var(--red); }
-    .result-meta {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      color: var(--muted);
-      font-size: 12px;
-      margin-top: 4px;
-    }
-    .result-body {
-      padding: 12px;
-      display: grid;
-      gap: 10px;
-    }
-    pre {
-      margin: 0;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: #0b0f14;
-      color: #e2e8f0;
-      padding: 10px;
-      white-space: pre-wrap;
-      word-break: break-word;
-      overflow-wrap: anywhere;
-      font-size: 12px;
-      line-height: 1.55;
-    }
-    .assertion-list {
-      display: grid;
-      gap: 7px;
-    }
-    .assertion-item {
-      border-radius: 8px;
-      padding: 9px 10px;
-      border: 1px solid var(--border);
-      background: var(--surface-3);
-      font-size: 13px;
-    }
-    .assertion-item.pass { border-color: rgba(45, 211, 111, 0.45); }
-    .assertion-item.fail { border-color: rgba(255, 107, 107, 0.45); }
-    .observability-list {
-      display: grid;
-      gap: 8px;
-    }
-    .observability-link {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: center;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--surface-3);
-      padding: 10px;
-      color: var(--text);
-      text-decoration: none;
-      min-width: 0;
-    }
-    .observability-link > span { min-width: 0; }
-    .observability-link:hover,
-    .observability-link:focus-visible {
-      border-color: var(--blue);
-      outline: none;
-    }
-    .link-target {
-      color: var(--muted);
-      font-size: 12px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      max-width: 180px;
-    }
-    .execution-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-      margin-top: 12px;
-    }
-    .execution-metric {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--surface-3);
-      padding: 9px;
-    }
-    .execution-metric strong {
-      display: block;
-      margin-top: 3px;
-      font-size: 15px;
-    }
-    .muted { color: var(--muted); }
-    .tiny { font-size: 12px; }
-    @media (max-width: 1240px) {
-      body { padding: 16px; }
-      .layout { grid-template-columns: 300px minmax(0, 1fr); }
-      .inspector { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-      .result-list { max-height: none; }
-      textarea { min-height: 460px; }
-    }
-    @media (max-width: 640px) {
-      body { padding: 12px; }
-      .layout, .inspector { grid-template-columns: 1fr; }
-      .app-header { align-items: flex-start; }
-      .header-meta { justify-content: flex-start; width: 100%; }
-      .summary-grid { grid-template-columns: 1fr; }
-      .execution-grid { grid-template-columns: 1fr; }
-      .template-list { max-height: none; }
-      textarea { min-height: 360px; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
-    }
-  </style>
+  <link rel="stylesheet" href="/qa/scenarios/assets/qa-scenarios.css" />
 </head>
 <body>
   <main class="shell">
@@ -1811,6 +1415,8 @@ function renderScenarioPage() {
             </div>
             <span id="template-count" class="chip">0</span>
           </div>
+          <label class="field-label" for="template-search">Search scenarios</label>
+          <input id="template-search" class="search-input" type="search" placeholder="name, id, tag" autocomplete="off" />
           <div id="template-list" class="template-list"></div>
         </section>
         <section class="panel">
@@ -1825,21 +1431,24 @@ function renderScenarioPage() {
       </aside>
 
       <section class="workspace">
-        <section class="panel">
+        <section class="panel editor-panel">
           <div class="editor-toolbar">
             <div>
               <h2>Scenario Editor</h2>
               <p id="scenario-description">Template + JSON editing</p>
             </div>
             <div class="button-row">
+              <button id="format-button" class="button-secondary" type="button">Format JSON</button>
+              <button id="copy-button" class="button-secondary" type="button">Copy JSON</button>
               <button id="validate-button" class="button-secondary" type="button">Validate</button>
               <button id="reset-button" class="button-ghost" type="button">Reset</button>
               <button id="run-button" class="button-primary" type="button">Run scenario</button>
             </div>
           </div>
           <textarea id="scenario-editor" spellcheck="false" aria-label="Scenario JSON editor"></textarea>
-          <div class="status-line">
+          <div class="status-line" role="status" aria-live="polite">
             <span id="validation-pill" class="status-pill status-valid">Ready</span>
+            <span id="editor-dirty" class="status-pill status-neutral">Clean</span>
             <span class="mono tiny">POST /qa/scenarios/run</span>
           </div>
           <ul id="validation-errors" class="error-list" hidden></ul>
@@ -1851,17 +1460,21 @@ function renderScenarioPage() {
           <div class="result-toolbar">
             <div>
               <h2>Execution</h2>
-              <p>선택한 템플릿의 실행 범위를 확인합니다.</p>
+              <p>선택한 템플릿의 실행 범위와 진행 상태를 확인합니다.</p>
             </div>
-            <div id="run-status" class="status-pill status-valid">No run yet</div>
+            <div class="execution-state">
+              <div id="run-status" class="status-pill status-valid" role="status" aria-live="polite">No run yet</div>
+            </div>
           </div>
+          <div id="run-status-detail" class="run-status-detail mono tiny" hidden></div>
           <div id="execution-grid" class="execution-grid"></div>
+          <div id="step-status-list" class="step-status-list"></div>
         </section>
         <section class="panel">
           <div class="result-toolbar">
             <div>
               <h2>Results</h2>
-              <p>실행 결과와 assertion verdict를 step 단위로 확인합니다.</p>
+              <p>실패 step을 먼저 펼쳐 assertion verdict를 확인합니다.</p>
             </div>
           </div>
           <div id="summary-grid" class="summary-grid" hidden></div>
@@ -1875,7 +1488,7 @@ function renderScenarioPage() {
           <div class="panel-header">
             <div>
               <h2>Observability</h2>
-              <p>실행 후 메트릭과 로그 확인으로 바로 이동합니다.</p>
+              <p>실행 후 run id와 request id로 로그 확인까지 이동합니다.</p>
             </div>
           </div>
           <div id="observability-list" class="observability-list"></div>
@@ -1884,237 +1497,8 @@ function renderScenarioPage() {
     </section>
   </main>
 
-  <script>
-    const templates = ${templatesJson};
-    const defaultTemplateId = ${escapeForInlineScript(defaultTemplateId)};
-    const monitoringLinks = ${monitoringLinksJson};
-
-    const templateList = document.getElementById('template-list');
-    const templateCount = document.getElementById('template-count');
-    const editor = document.getElementById('scenario-editor');
-    const scenarioDescription = document.getElementById('scenario-description');
-    const validationPill = document.getElementById('validation-pill');
-    const validationErrors = document.getElementById('validation-errors');
-    const summaryGrid = document.getElementById('summary-grid');
-    const resultList = document.getElementById('result-list');
-    const runStatus = document.getElementById('run-status');
-    const executionGrid = document.getElementById('execution-grid');
-    const observabilityList = document.getElementById('observability-list');
-    const runButton = document.getElementById('run-button');
-    const validateButton = document.getElementById('validate-button');
-    const resetButton = document.getElementById('reset-button');
-
-    let activeTemplateId = defaultTemplateId;
-
-    function getTemplate(id) {
-      return templates.find((template) => template.id === id) || templates[0];
-    }
-
-    function escapeText(value) {
-      return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    }
-
-    function getStepCount(template) {
-      return Array.isArray(template.steps) ? template.steps.length : 0;
-    }
-
-    function renderExecutionProfile(template) {
-      const steps = Array.isArray(template.steps) ? template.steps : [];
-      const assertionCount = steps.reduce((sum, step) => sum + (Array.isArray(step.assertions) ? step.assertions.length : 0), 0);
-      const methods = [...new Set(steps.map((step) => step.method || 'GET'))].join(', ') || 'n/a';
-
-      executionGrid.innerHTML = [
-        ['Mode', template.mode || 'n/a'],
-        ['Steps', String(steps.length)],
-        ['Assertions', String(assertionCount)],
-        ['Methods', methods],
-        ['Timeout', steps.some((step) => step.timeoutMs) ? 'custom' : '8s default'],
-        ['Endpoint', '/qa/scenarios/run'],
-      ].map(([label, value]) => '<div class="execution-metric"><span class="muted tiny">' + escapeText(label) + '</span><strong>' + escapeText(value) + '</strong></div>').join('');
-    }
-
-    function buildMonitoringUrls(run) {
-      const encodedLogQuery = encodeURIComponent('{service_name="mwa-backend"} |= "event_name"');
-      const encodedScenarioMetric = encodeURIComponent('mwa_scenario_runs_total');
-      const encodedHttpMetric = encodeURIComponent('rate(mwa_http_requests_total[5m])');
-
-      return [
-        ['Prometheus', monitoringLinks.prometheus + '/graph?g0.expr=' + encodedScenarioMetric, 'scenario run counters'],
-        ['HTTP Metrics', monitoringLinks.prometheus + '/graph?g0.expr=' + encodedHttpMetric, 'backend request rate'],
-        ['Loki', monitoringLinks.loki + '/loki/api/v1/query?query=' + encodedLogQuery, 'backend event logs'],
-        ['Grafana', monitoringLinks.grafana + '/dashboards', 'provisioned dashboards'],
-      ].map(([label, href, description]) => ({ label, href, description }));
-    }
-
-    function renderObservability(run = null) {
-      const links = buildMonitoringUrls(run);
-      observabilityList.innerHTML = links.map((link) => (
-        '<a class="observability-link" href="' + escapeText(link.href) + '" target="_blank" rel="noreferrer">' +
-          '<span><strong>' + escapeText(link.label) + '</strong><br><span class="tiny muted">' + escapeText(link.description) + '</span></span>' +
-          '<span class="link-target mono">' + escapeText(link.href) + '</span>' +
-        '</a>'
-      )).join('');
-    }
-
-    function setValidationState(state, errors = []) {
-      validationPill.className = 'status-pill ' + (state === 'valid' ? 'status-valid' : state === 'running' ? 'status-running' : 'status-invalid');
-      validationPill.textContent = state === 'valid' ? 'Valid scenario' : state === 'running' ? 'Running...' : 'Validation failed';
-      validationErrors.hidden = errors.length === 0;
-      validationErrors.innerHTML = errors.map((error) => '<li>' + escapeText(error) + '</li>').join('');
-    }
-
-    function renderTemplates() {
-      const buyerTemplates = templates.filter((template) => template.id.startsWith('buyer-'));
-      const nonBuyerTemplates = templates.filter((template) => !template.id.startsWith('buyer-'));
-      const backendTemplates = nonBuyerTemplates.filter((template) => template.id !== 'health-success' && template.id !== 'metrics-text-check' && template.id !== 'health-metrics-parallel' && template.id !== 'route-not-found');
-      const coreTemplates = nonBuyerTemplates.filter((template) => !backendTemplates.includes(template));
-      templateCount.textContent = String(templates.length) + ' total';
-
-      const renderGroup = (title, groupTemplates) => {
-        if (groupTemplates.length === 0) {
-          return '';
-        }
-
-        const cards = groupTemplates.map((template) => {
-          const activeClass = template.id === activeTemplateId ? ' is-active' : '';
-          return '<button class="template-card' + activeClass + '" type="button" data-template-id="' + escapeText(template.id) + '">' +
-            '<strong>' + escapeText(template.name) + '</strong>' +
-            '<span class="muted tiny">' + escapeText(template.description) + '</span>' +
-            '<div class="template-meta"><span>' + escapeText(template.mode || 'n/a') + '</span><span>' + getStepCount(template) + ' steps</span></div>' +
-          '</button>';
-        }).join('');
-
-        return '<section class="template-group"><h3 class="template-group-title"><span>' + escapeText(title) + '</span><span class="template-group-count">' + groupTemplates.length + ' scenarios</span></h3>' + cards + '</section>';
-      };
-
-      templateList.innerHTML = [
-        renderGroup('Buyer journey scenarios', buyerTemplates),
-        renderGroup('Backend API scenarios', backendTemplates),
-        renderGroup('Core checks', coreTemplates),
-      ].join('');
-    }
-
-    function loadTemplate(id) {
-      const template = structuredClone(getTemplate(id));
-      activeTemplateId = template.id;
-      scenarioDescription.textContent = template.description;
-      editor.value = JSON.stringify(template, null, 2);
-      renderTemplates();
-      renderExecutionProfile(template);
-      renderObservability();
-      setValidationState('valid');
-    }
-
-    async function validateCurrentScenario() {
-      let scenario;
-      try {
-        scenario = JSON.parse(editor.value);
-      } catch (error) {
-        setValidationState('invalid', ['JSON parse error: ' + error.message]);
-        return null;
-      }
-
-      const response = await fetch('/qa/scenarios/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dryRun: true, scenario }),
-      });
-      const payload = await response.json();
-      if (!payload.success) {
-        setValidationState('invalid', payload.errors || ['Validation failed']);
-        return null;
-      }
-
-      setValidationState('valid');
-      renderExecutionProfile(scenario);
-      return scenario;
-    }
-
-    function renderSummary(summary, mode, backendBaseUrl) {
-      summaryGrid.hidden = false;
-      summaryGrid.innerHTML = [
-        ['Mode', mode],
-        ['Total steps', String(summary.totalSteps)],
-        ['Passed', String(summary.passedSteps)],
-        ['Failed', String(summary.failedSteps)],
-      ].map(([label, value]) => '<article class="summary-card"><span class="muted tiny">' + escapeText(label) + '</span><strong>' + escapeText(value) + '</strong></article>').join('');
-      runStatus.className = 'status-pill ' + (summary.passed ? 'status-valid' : 'status-invalid');
-      runStatus.textContent = (summary.passed ? 'Passed' : 'Failed') + ' · ' + backendBaseUrl;
-    }
-
-    function renderResults(results) {
-      resultList.innerHTML = results.map((result) => {
-        const assertionMarkup = result.assertions.length === 0
-          ? '<div class="assertion-item">No assertions executed</div>'
-          : result.assertions.map((assertion) => {
-              return '<div class="assertion-item ' + (assertion.passed ? 'pass' : 'fail') + '"><strong>' + (assertion.passed ? 'PASS' : 'FAIL') + '</strong> · ' + escapeText(assertion.label) + '<div class="tiny muted">expected: ' + escapeText(JSON.stringify(assertion.expected)) + ' · actual: ' + escapeText(JSON.stringify(assertion.actual)) + '</div></div>';
-            }).join('');
-        const errorMarkup = result.error ? '<div class="assertion-item fail"><strong>Execution error</strong><div class="tiny muted">' + escapeText(result.error) + '</div></div>' : '';
-        const requestPreview = JSON.stringify({ headers: result.requestHeaders || {}, body: result.requestBody }, null, 2);
-        return '<article class="result-card ' + (result.passed ? 'result-pass' : 'result-fail') + '"><div class="result-head"><div><strong>' + escapeText(result.label) + '</strong><div class="result-meta"><span class="mono">' + escapeText(result.method + ' ' + result.path) + '</span><span>' + (result.status === null ? 'NO RESPONSE' : 'status ' + escapeText(result.status)) + '</span><span>' + escapeText(result.durationMs) + 'ms</span><span>' + escapeText(result.contentType || 'n/a') + '</span></div></div><div class="status-pill ' + (result.passed ? 'status-valid' : 'status-invalid') + '">' + (result.passed ? 'PASS' : 'FAIL') + '</div></div><div class="result-body"><div><div class="tiny muted" style="margin-bottom:8px">Request</div><pre>' + escapeText(requestPreview) + '</pre></div><div><div class="tiny muted" style="margin-bottom:8px">Response preview</div><pre>' + escapeText(result.preview || '') + '</pre></div>' + errorMarkup + '<div><div class="tiny muted" style="margin-bottom:8px">Assertions</div><div class="assertion-list">' + assertionMarkup + '</div></div></div></article>';
-      }).join('');
-    }
-
-    templateList.addEventListener('click', (event) => {
-      const button = event.target.closest('[data-template-id]');
-      if (!button) {
-        return;
-      }
-      loadTemplate(button.getAttribute('data-template-id'));
-    });
-
-    validateButton.addEventListener('click', async () => {
-      await validateCurrentScenario();
-    });
-
-    resetButton.addEventListener('click', () => {
-      loadTemplate(activeTemplateId);
-      summaryGrid.hidden = true;
-      runStatus.className = 'status-pill status-valid';
-      runStatus.textContent = 'No run yet';
-      resultList.innerHTML = '<div class="result-card"><div class="result-body muted">시나리오를 실행하면 결과가 여기에 표시됩니다.</div></div>';
-    });
-
-    runButton.addEventListener('click', async () => {
-      const scenario = await validateCurrentScenario();
-      if (!scenario) {
-        return;
-      }
-
-      setValidationState('running');
-      runButton.disabled = true;
-      runStatus.className = 'status-pill status-running';
-      runStatus.textContent = 'Running';
-
-      const response = await fetch('/qa/scenarios/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario }),
-      });
-      const payload = await response.json();
-
-      if (!payload.success) {
-        setValidationState('invalid', payload.errors || ['Execution failed']);
-        runStatus.className = 'status-pill status-invalid';
-        runStatus.textContent = 'Execution blocked';
-        runButton.disabled = false;
-        return;
-      }
-
-      setValidationState('valid');
-      renderSummary(payload.run.summary, payload.run.mode, payload.run.backendBaseUrl);
-      renderResults(payload.run.results);
-      renderObservability(payload.run);
-      runButton.disabled = false;
-    });
-
-    loadTemplate(defaultTemplateId);
-  </script>
+  <script id="qa-scenarios-bootstrap" type="application/json">${bootstrapJson}</script>
+  <script src="/qa/scenarios/assets/qa-scenarios.js" defer></script>
 </body>
 </html>`;
 }
@@ -2314,6 +1698,13 @@ actionableIncidentChecksTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
 updateKpiGauges();
 
 const app = express();
+app.use(
+  "/qa/scenarios/assets",
+  express.static(path.join(__dirname, "public", "qa-scenarios"), {
+    immutable: false,
+    maxAge: "5m",
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
