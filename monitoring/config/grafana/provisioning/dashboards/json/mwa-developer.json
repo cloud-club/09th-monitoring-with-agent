@@ -26,8 +26,8 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Top 5 Slow API",
-      "description": "역할: 가장 느린 API 식별. 왜 보는가: 지연 집중 endpoint 압축. 다음 판단: 문제 API 중심 trace drill-down.",
+      "title": "Top 5 Slow API by p95",
+      "description": "역할: p95 기준 느린 API 식별. 왜 보는가: 평균이 숨기는 꼬리 지연 endpoint 압축. 다음 판단: 문제 API 중심 trace/log drill-down.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -42,7 +42,8 @@
         "defaults": {
           "color": {
             "mode": "palette-classic"
-          }
+          },
+          "unit": "s"
         },
         "overrides": []
       },
@@ -58,7 +59,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "topk(5, sum(rate(mwa_http_request_duration_seconds_sum{service=\"backend\"}[5m])) by (handler) / clamp_min(sum(rate(mwa_http_request_duration_seconds_count{service=\"backend\"}[5m])) by (handler), 0.001))",
+          "expr": "topk(5, histogram_quantile(0.95, sum by (handler, le) (rate(mwa_http_request_duration_seconds_bucket{service=\"backend\"}[5m]))))",
           "legendFormat": "{{handler}}",
           "datasource": {
             "type": "prometheus",
@@ -134,9 +135,9 @@
     },
     {
       "id": 4,
-      "type": "logs",
+      "type": "table",
       "title": "Failed Request Table",
-      "description": "역할: 실패 요청 목록(endpoint/status/duration/trace). 왜 보는가: 어떤 요청이 언제 실패했는지 확인. 다음 판단: trace_id 선택 후 상세 분석.",
+      "description": "역할: 실패 요청 목록(endpoint/status/duration/trace). 왜 보는가: 어떤 요청이 언제 실패했는지 확인. 다음 판단: trace_id 클릭 후 Trace-selected Logs 자동 필터링.",
       "datasource": {
         "type": "loki",
         "uid": "loki"
@@ -148,25 +149,105 @@
         "h": 7
       },
       "options": {
-        "showTime": true,
-        "wrapLogMessage": false,
-        "dedupStrategy": "none",
-        "sortOrder": "Descending"
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "{compose_service=\"mwa-backend\"} | json | status_code >= 500",
+          "expr": "{service_name=\"mwa-backend\"} | json | status_code >= 500",
           "datasource": {
             "type": "loki",
             "uid": "loki"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "links": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "trace_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Filter Developer logs by trace_id",
+                    "url": "/d/mwa-developer?orgId=1&var-trace_id=${__value.raw}",
+                    "targetBlank": false
+                  },
+                  {
+                    "title": "Open Tempo Explore",
+                    "url": "/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22${__value.raw}%22%7D%5D,%22range%22:%7B%22from%22:%22now-1h%22,%22to%22:%22now%22%7D%7D",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "Line",
+            "format": "json",
+            "replace": true
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {
+              "timestamp": true,
+              "trace_id": true,
+              "endpoint": true,
+              "method": true,
+              "status_code": true,
+              "duration_ms": true,
+              "error_code": true,
+              "result": true
+            },
+            "indexByName": {
+              "timestamp": 0,
+              "trace_id": 1,
+              "endpoint": 2,
+              "method": 3,
+              "status_code": 4,
+              "duration_ms": 5,
+              "error_code": 6,
+              "result": 7
+            },
+            "renameByName": {}
           }
         }
       ]
     },
     {
       "id": 5,
-      "type": "text",
+      "type": "table",
       "title": "Recent Failed Traces",
       "gridPos": {
         "x": 12,
@@ -175,9 +256,98 @@
         "h": 7
       },
       "options": {
-        "mode": "markdown",
-        "content": "역할: 최근 실패 trace 목록 진입점. 왜 보는가: 오류 계층 파악 속도 향상.\n\n바로가기: [Tempo Explore](/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22%7D)\n\nTODO: trace 검색 API 기반 자동 리스트 패널 추가."
-      }
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "description": "역할: Loki 로그에서 최근 실패 trace 후보를 바로 노출. 왜 보는가: Explore 이동 전 대시보드에서 trace_id, endpoint, status, duration, error_code를 압축 확인. 다음 판단: trace_id 클릭 후 로그/Tempo 확인.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=\"mwa-backend\"} | json | trace_id != \"\" | status_code >= 500",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "links": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "trace_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Filter Developer logs by trace_id",
+                    "url": "/d/mwa-developer?orgId=1&var-trace_id=${__value.raw}",
+                    "targetBlank": false
+                  },
+                  {
+                    "title": "Open Tempo Explore",
+                    "url": "/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22${__value.raw}%22%7D%5D,%22range%22:%7B%22from%22:%22now-1h%22,%22to%22:%22now%22%7D%7D",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "Line",
+            "format": "json",
+            "replace": true
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {
+              "timestamp": true,
+              "trace_id": true,
+              "endpoint": true,
+              "status_code": true,
+              "duration_ms": true,
+              "error_code": true
+            },
+            "indexByName": {
+              "timestamp": 0,
+              "trace_id": 1,
+              "endpoint": 2,
+              "status_code": 3,
+              "duration_ms": 4,
+              "error_code": 5
+            },
+            "renameByName": {}
+          }
+        }
+      ]
     },
     {
       "id": 6,
@@ -203,7 +373,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{compose_service=\"mwa-backend\"} | json | trace_id =~ \"$trace_id\"",
+          "expr": "{service_name=\"mwa-backend\"} | json | trace_id =~ \"$trace_id\" | line_format \"{{.timestamp}} trace={{.trace_id}} endpoint={{.endpoint}} status={{.status_code}} duration_ms={{.duration_ms}} error={{.error_code}} result={{.result}}\"",
           "datasource": {
             "type": "loki",
             "uid": "loki"
@@ -268,7 +438,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "topk(5, sum by (error_code) (count_over_time({compose_service=\"mwa-backend\"} | json | error_code != \"\" [5m])))",
+          "expr": "topk(5, sum by (error_code) (count_over_time({service_name=\"mwa-backend\"} | json | error_code != \"\" [5m])))",
           "datasource": {
             "type": "loki",
             "uid": "loki"
@@ -406,7 +576,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{compose_service=\"mwa-backend\"} | json | error_code != \"\"",
+          "expr": "{service_name=\"mwa-backend\"} | json | error_code != \"\" | line_format \"{{.timestamp}} trace={{.trace_id}} endpoint={{.endpoint}} status={{.status_code}} error={{.error_code}} result={{.result}}\"",
           "datasource": {
             "type": "loki",
             "uid": "loki"

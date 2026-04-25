@@ -73,15 +73,16 @@
 
 ### 4-2) 각 레이어 핵심 패널(현재 구현)
 
-- `Landing`: `User Experience Status`, `Business Impact Status`, `Infra Health Status`, `Active Alerts`
+- `Landing`: `User Experience Status`, `Business Impact Status`, `Infra Health Status`, `Critical Alerts`
 - `SRE`: `Service Availability`, `5xx Ratio (5m)`, `Latency p95 (5m)`, `Apdex Score`, `Saturation Warning Summary`
-- `Infra`: `Host/Container Usage`, `Container CPU Throttling`, `OOM / Restart Reason`, `DB Connections Used %`
-- `Developer`: `Top 5 Slow API`, `Failed Request Table`, `Trace-selected Logs`, `Top Error Signatures`
+- `Infra`: `Host/Container Usage`, `Container CPU Throttling`, `Container Memory Usage / Limit %`, `DB Connections Used %`, `Disk/Network`
+- `Developer`: `Top 5 Slow API by p95`, `Failed Request Table`, `Recent Failed Traces`, `Trace-selected Logs`, `Top Error Signatures`
 - `Executive`: `Search/Cart/Order/Payment`, `Conversion Delta vs Baseline`, `Estimated Revenue Loss`
 
 주의:
 - `Worker Queue Lag`, `Thread/Pool Saturation`, `Estimated Revenue Loss`는 패널이 제공되지만 현재는 `TODO(미계측)` 상태입니다.
-- `Recent Failed Traces` 자동 리스트는 Tempo 검색 API 연동 전까지 Explore 링크 중심으로 사용합니다.
+- Loki 로그 쿼리는 `{service_name="mwa-backend"} | json`를 canonical selector로 사용합니다.
+- `Recent Failed Traces`는 Loki 기반 실패 trace 후보를 먼저 보여주고, `trace_id` 링크로 Developer 필터와 Tempo Explore에 진입합니다.
 
 ### 5) 상황별 어디를 볼지
 
@@ -89,7 +90,7 @@
 - 응답이 느리다: `SRE -> Infra -> Developer`
 - DB가 의심된다: `Infra -> Developer`
 - 비즈니스 영향 확인: `Executive`
-- 전체 지표/노스스타 확인: `MWA 백엔드 개요`
+- 모니터링 시스템 품질 확인: `MWA / Observability Quality`
 
 ### 6) 자주 막히는 지점(FAQ)
 

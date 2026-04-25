@@ -108,30 +108,97 @@ groups:
 
       - record: mwa:user_experience_status:5m
         expr: |
-          (
-            ((max(up{job="mwa-backend"}) or on() vector(0)) >= bool 1)
-            *
-            ((mwa:http_5xx_ratio:5m or on() vector(0)) < bool 0.02)
-            *
-            ((mwa:http_latency_p95_seconds:5m or on() vector(0)) < bool 1.5)
+          clamp_min(
+            1
+            -
+            0.5 *
+            (
+              (
+                ((max(up{job="mwa-backend"}) or on() vector(0)) < bool 1)
+                +
+                ((mwa:http_5xx_ratio:5m or on() vector(0)) > bool 0.01)
+                +
+                ((mwa:http_latency_p95_seconds:5m or on() vector(0)) > bool 0.7)
+                +
+                ((mwa:apdex_score:5m or on() vector(1)) < bool 0.95)
+              ) > bool 0
+            )
+            -
+            0.5 *
+            (
+              (
+                ((max(up{job="mwa-backend"}) or on() vector(0)) < bool 1)
+                +
+                ((mwa:http_5xx_ratio:5m or on() vector(0)) > bool 0.03)
+                +
+                ((mwa:http_latency_p95_seconds:5m or on() vector(0)) > bool 1)
+                +
+                ((mwa:apdex_score:5m or on() vector(1)) < bool 0.85)
+              ) > bool 0
+            ),
+            0
           )
 
       - record: mwa:business_impact_status:5m
         expr: |
-          (
-            ((mwa:order_create_success_ratio:5m or on() vector(0)) >= bool 0.95)
-            *
-            ((mwa:payment_completion_ratio:5m or on() vector(0)) >= bool 0.95)
+          clamp_min(
+            1
+            -
+            0.5 *
+            (
+              (
+                ((mwa:search_result_exists_ratio:5m or on() vector(0)) < bool 0.80)
+                +
+                ((mwa:cart_add_success_ratio:5m or on() vector(0)) < bool 0.99)
+                +
+                ((mwa:order_create_success_ratio:5m or on() vector(0)) < bool 0.99)
+                +
+                ((mwa:payment_completion_ratio:5m or on() vector(0)) < bool 0.95)
+              ) > bool 0
+            )
+            -
+            0.5 *
+            (
+              (
+                ((mwa:search_result_exists_ratio:5m or on() vector(0)) < bool 0.60)
+                +
+                ((mwa:cart_add_success_ratio:5m or on() vector(0)) < bool 0.95)
+                +
+                ((mwa:order_create_success_ratio:5m or on() vector(0)) < bool 0.95)
+                +
+                ((mwa:payment_completion_ratio:5m or on() vector(0)) < bool 0.90)
+              ) > bool 0
+            ),
+            0
           )
 
       - record: mwa:infra_health_status:5m
         expr: |
-          (
-            ((mwa:cpu_usage_ratio:5m or on() vector(1)) < bool 0.80)
-            *
-            ((mwa:memory_usage_ratio:5m or on() vector(1)) < bool 0.85)
-            *
-            ((mwa:db_connections_used_ratio:5m or on() vector(1)) < bool 0.80)
+          clamp_min(
+            1
+            -
+            0.5 *
+            (
+              (
+                ((mwa:cpu_usage_ratio:5m or on() vector(1)) >= bool 0.80)
+                +
+                ((mwa:memory_usage_ratio:5m or on() vector(1)) >= bool 0.85)
+                +
+                ((mwa:db_connections_used_ratio:5m or on() vector(1)) >= bool 0.80)
+              ) > bool 0
+            )
+            -
+            0.5 *
+            (
+              (
+                ((mwa:cpu_usage_ratio:5m or on() vector(1)) >= bool 0.90)
+                +
+                ((mwa:memory_usage_ratio:5m or on() vector(1)) >= bool 0.95)
+                +
+                ((mwa:db_connections_used_ratio:5m or on() vector(1)) >= bool 0.90)
+              ) > bool 0
+            ),
+            0
           )
 
       - record: mwa:saturation_warning_score:5m

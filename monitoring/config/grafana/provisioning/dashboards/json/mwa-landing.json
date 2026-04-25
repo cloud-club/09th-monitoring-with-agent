@@ -224,8 +224,8 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "Active Alerts",
-      "description": "역할: 현재 firing 중인 경고/치명 알람 수. 왜 보는가: 운영 룰 기준 즉시 확인. 다음 판단: 알람 유형별 SRE/Infra/Developer 이동.",
+      "title": "Critical Alerts",
+      "description": "역할: 현재 firing critical 알림 수. 왜 보는가: 즉시 대응해야 하는 알림만 Landing에서 압축. 다음 판단: 알림 유형에 따라 SRE/Infra/Developer 이동.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -246,12 +246,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "green",
                 "value": null
               },
               {
-                "color": "green",
-                "value": 0
+                "color": "red",
+                "value": 1
               }
             ]
           }
@@ -275,7 +275,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(ALERTS{alertstate=\"firing\"})",
+          "expr": "sum(ALERTS{alertstate=\"firing\",severity=\"critical\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -353,7 +353,7 @@
       "id": 7,
       "type": "stat",
       "title": "API p95 Latency (5m)",
-      "description": "역할: 최근 5분 상위 지연 시간. 왜 보는가: 평균이 아닌 체감 느림 확인. 다음 판단: 상승 시 SRE 후 필요 시 Infra.",
+      "description": "역할: 상위 지연 시간. 왜 보는가: SRE 기준과 동일한 사용자 체감 지연 기준으로 Landing/SRE 판단을 정렬. 다음 판단: 상승 시 SRE, 필요 시 Infra.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -383,7 +383,7 @@
               },
               {
                 "color": "red",
-                "value": 1.5
+                "value": 1
               }
             ]
           }
@@ -414,6 +414,21 @@
           }
         }
       ]
+    },
+    {
+      "id": 8,
+      "type": "text",
+      "title": "Status Score Criteria",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 8
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "### 상태 점수 기준\n\nUser Experience Status\n- 1.0: backend up, 5xx, p95 latency, Apdex 모두 정상\n- 0.5: 경고 기준 초과\n- 0.0: 치명 기준 초과\n\nBusiness Impact Status\n- 1.0: 검색 결과, 장바구니, 주문, 결제 퍼널 정상\n- 0.5: 일부 퍼널 저하\n- 0.0: 매출 영향 가능성 높음\n\nInfra Health Status\n- 1.0: CPU, Memory, DB Connection 정상\n- 0.5: 포화 경고\n- 0.0: 포화 위험"
+      }
     }
   ],
   "refresh": "30s",

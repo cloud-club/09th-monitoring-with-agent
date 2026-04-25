@@ -11,6 +11,8 @@ import { SEEDED_CUSTOMER_IDS } from '../../src/request-context/seeded-customer-i
 
 type SupertestTarget = Parameters<typeof request>[0];
 
+const TRACE_ID_PATTERN = /^[0-9a-f]{32}$/;
+
 function isSupertestTarget(value: unknown): value is SupertestTarget {
 	return (typeof value === 'function') || (typeof value === 'object' && value !== null);
 }
@@ -86,6 +88,7 @@ describe('backend integration behavior', () => {
 				access: 'public-read',
 				context: {
 					requestId: response.headers[REQUEST_ID_HEADER],
+					traceId: expect.stringMatching(TRACE_ID_PATTERN),
 					userRole: 'anonymous',
 				},
 			},
@@ -146,6 +149,7 @@ describe('backend integration behavior', () => {
 				accepted: true,
 				context: {
 					requestId: 'request-contract-001',
+					traceId: expect.stringMatching(TRACE_ID_PATTERN),
 					userRole: 'buyer',
 					customerId: SEEDED_CUSTOMER_IDS[0],
 				},

@@ -1687,8 +1687,8 @@
           "inactive": false,
           "noData": true,
           "normal": false,
-            "ok": false,
-            "pending": true
+          "ok": false,
+          "pending": true
         },
         "viewMode": "list"
       },
@@ -1739,7 +1739,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "sum by (error_code) (count_over_time({job=\"backend-file\", service_name=\"mwa-backend\"} | json | error_code != \"\" [5m]))",
+          "expr": "sum by (error_code) (count_over_time({service_name=\"mwa-backend\"} | json | error_code != \"\" [5m]))",
           "legendFormat": "{{error_code}}",
           "queryType": "range",
           "refId": "A"
@@ -1791,7 +1791,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "sum by (event_name) (count_over_time({job=\"backend-file\", service_name=\"mwa-backend\"} | json | event_name != \"\" [5m]))",
+          "expr": "sum by (event_name) (count_over_time({service_name=\"mwa-backend\"} | json | event_name != \"\" [5m]))",
           "legendFormat": "{{event_name}}",
           "queryType": "range",
           "refId": "A"
@@ -1810,7 +1810,7 @@
       },
       "id": 130,
       "options": {
-        "content": "### 추천 LogQL\n\n기본 구조화 로그\n```logql\n{job=\"backend-file\", service_name=\"mwa-backend\"} | json\n```\n\n특정 request_id 추적\n```logql\n{job=\"backend-file\", service_name=\"mwa-backend\"} | json | request_id=\"<request-id>\"\n```\n\n에러 코드별 최근 로그\n```logql\n{job=\"backend-file\", service_name=\"mwa-backend\"} | json | error_code != \"\"\n```\n\n도메인 이벤트만 보기\n```logql\n{job=\"backend-file\", service_name=\"mwa-backend\"} | json | event_name != \"\"\n```",
+        "content": "### 추천 LogQL\n\n기본 구조화 로그\n```logql\n{service_name=\"mwa-backend\"} | json\n```\n\n특정 request_id 추적\n```logql\n{service_name=\"mwa-backend\"} | json | request_id=\"<request-id>\"\n```\n\n에러 코드별 최근 로그\n```logql\n{service_name=\"mwa-backend\"} | json | error_code != \"\"\n```\n\n도메인 이벤트만 보기\n```logql\n{service_name=\"mwa-backend\"} | json | event_name != \"\"\n```",
         "mode": "markdown"
       },
       "title": "Loki 쿼리 빠른 시작",
@@ -1841,7 +1841,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{job=\"backend-file\", service_name=\"mwa-backend\", level=~\"${log_level_filter}\"} | json | line_format \"{{.timestamp}} [{{.level}}] req={{.request_id}} method={{.method}} endpoint={{.endpoint}} result={{.result}} event={{.event_name}} error={{.error_code}} {{.message}}\"",
+          "expr": "{service_name=\"mwa-backend\", level=~\"${log_level_filter}\"} | json | line_format \"{{.timestamp}} [{{.level}}] req={{.request_id}} method={{.method}} endpoint={{.endpoint}} result={{.result}} event={{.event_name}} error={{.error_code}} {{.message}}\"",
           "queryType": "range",
           "refId": "A"
         }
@@ -1885,7 +1885,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "MWA 백엔드 개요 — 서버 메트릭·로그 패널",
+  "title": "MWA / Observability Quality",
   "uid": "mwa-overview",
   "version": 11
 }
