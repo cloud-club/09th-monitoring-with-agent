@@ -1,0 +1,619 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Developer 레이어 안내",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 5
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "레이어 목적: Trace/Log/SQL/의존성 지표로 문제 요청의 실제 원인을 규명합니다.\n\n- Trace 탐색: [Tempo Explore](/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22%7D)\n- 로그 탐색: [Loki Explore](/explore?orgId=1&left=%7B%22datasource%22:%22loki%22%7D)"
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Top 5 Slow API by p95",
+      "description": "역할: p95 기준 느린 API 식별. 왜 보는가: 평균이 숨기는 꼬리 지연 endpoint 압축. 다음 판단: 문제 API 중심 trace/log drill-down.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(5, histogram_quantile(0.95, sum by (handler, le) (rate(mwa_http_request_duration_seconds_bucket{service=\"backend\"}[5m]))))",
+          "legendFormat": "{{handler}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "bargauge",
+      "title": "HTTP 5xx Volume by Endpoint",
+      "description": "역할: 5xx 집중 endpoint 시각화. 왜 보는가: 기능 단위 원인 좁히기. 다음 판단: 상위 endpoint trace/log drill-down.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, sum(increase(mwa_http_requests_total{service=\"backend\",status_code=~\"5..\"}[5m])) by (handler))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Failed Request Table",
+      "description": "역할: 실패 요청 목록(endpoint/status/duration/trace). 왜 보는가: 어떤 요청이 언제 실패했는지 확인. 다음 판단: trace_id 클릭 후 Trace-selected Logs 자동 필터링.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 7
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=\"mwa-backend\"} | json | status_code >= 500",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "links": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "trace_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Filter Developer logs by trace_id",
+                    "url": "/d/mwa-developer?orgId=1&var-trace_id=${__value.raw}",
+                    "targetBlank": false
+                  },
+                  {
+                    "title": "Open Tempo Explore",
+                    "url": "/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22${__value.raw}%22%7D%5D,%22range%22:%7B%22from%22:%22now-1h%22,%22to%22:%22now%22%7D%7D",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "Line",
+            "format": "json",
+            "replace": true
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {
+              "timestamp": true,
+              "trace_id": true,
+              "endpoint": true,
+              "method": true,
+              "status_code": true,
+              "duration_ms": true,
+              "error_code": true,
+              "result": true
+            },
+            "indexByName": {
+              "timestamp": 0,
+              "trace_id": 1,
+              "endpoint": 2,
+              "method": 3,
+              "status_code": 4,
+              "duration_ms": 5,
+              "error_code": 6,
+              "result": 7
+            },
+            "renameByName": {}
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Recent Failed Traces",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 7
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "description": "역할: Loki 로그에서 최근 실패 trace 후보를 바로 노출. 왜 보는가: Explore 이동 전 대시보드에서 trace_id, endpoint, status, duration, error_code를 압축 확인. 다음 판단: trace_id 클릭 후 로그/Tempo 확인.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=\"mwa-backend\"} | json | trace_id != \"\" | status_code >= 500",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "links": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "trace_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Filter Developer logs by trace_id",
+                    "url": "/d/mwa-developer?orgId=1&var-trace_id=${__value.raw}",
+                    "targetBlank": false
+                  },
+                  {
+                    "title": "Open Tempo Explore",
+                    "url": "/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22${__value.raw}%22%7D%5D,%22range%22:%7B%22from%22:%22now-1h%22,%22to%22:%22now%22%7D%7D",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "Line",
+            "format": "json",
+            "replace": true
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {
+              "timestamp": true,
+              "trace_id": true,
+              "endpoint": true,
+              "status_code": true,
+              "duration_ms": true,
+              "error_code": true
+            },
+            "indexByName": {
+              "timestamp": 0,
+              "trace_id": 1,
+              "endpoint": 2,
+              "status_code": 3,
+              "duration_ms": 4,
+              "error_code": 5
+            },
+            "renameByName": {}
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "logs",
+      "title": "Trace-selected Logs",
+      "description": "역할: 선택 trace와 연동된 로그만 필터링. 왜 보는가: trace/log 문맥을 한 번에 확인. 다음 판단: exception/validation/external failure 확인.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 12,
+        "h": 7
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": false,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=\"mwa-backend\"} | json | trace_id =~ \"$trace_id\" | line_format \"{{.timestamp}} trace={{.trace_id}} endpoint={{.endpoint}} status={{.status_code}} duration_ms={{.duration_ms}} error={{.error_code}} result={{.result}}\"",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "bargauge",
+      "title": "Top Error Signatures",
+      "description": "역할: 예외/에러코드 상위 패턴 집계. 왜 보는가: 로그 전수 확인 없이 우선순위 결정. 다음 판단: 대표 시그니처부터 대응.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 19,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(5, sum by (error_code) (count_over_time({service_name=\"mwa-backend\"} | json | error_code != \"\" [5m])))",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Slow SQL Mean Time",
+      "description": "역할: 느린 SQL 상위 쿼리. 왜 보는가: 앱 지연의 DB 원인 확인. 다음 판단: 인덱스/락/N+1 점검.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(5, rate(pg_stat_statements_seconds_total{datname=\"mwa\"}[5m]) / clamp_min(rate(pg_stat_statements_calls_total{datname=\"mwa\"}[5m]), 0.0001))",
+          "legendFormat": "{{queryid}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Payment Processing Latency",
+      "description": "역할: 결제 처리 시간(p95). 왜 보는가: 결제 흐름 병목 확인. 다음 판단: 이상 시 결제 요청 처리 경로 점검.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 26,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mwa:payment_processing_latency_p95_seconds:5m",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "logs",
+      "title": "Error Code Stream",
+      "description": "역할: 시간대별 오류 코드 흐름. 왜 보는가: 장애 전개 패턴과 변화 시점 확인. 다음 판단: 배포/트래픽/인프라 이벤트와 비교.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 24,
+        "h": 7
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": false,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=\"mwa-backend\"} | json | error_code != \"\" | line_format \"{{.timestamp}} trace={{.trace_id}} endpoint={{.endpoint}} status={{.status_code}} error={{.error_code}} result={{.result}}\"",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "mwa",
+    "ia"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "trace_id",
+        "label": "Trace ID",
+        "type": "textbox",
+        "query": ".*",
+        "current": {
+          "selected": false,
+          "text": ".*",
+          "value": ".*"
+        },
+        "hide": 0
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "MWA / Developer",
+  "uid": "mwa-developer",
+  "version": 1
+}

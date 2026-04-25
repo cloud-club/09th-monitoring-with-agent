@@ -1,0 +1,247 @@
+groups:
+  - name: mwa-sli-recording-rules
+    rules:
+      - record: mwa:http_5xx_ratio:5m
+        expr: |
+          (
+            (sum(rate(mwa_http_requests_total{service="backend",status_code=~"5.."}[5m])) or on() vector(0))
+            /
+            (sum(rate(mwa_http_requests_total{service="backend"}[5m])) or on() vector(0))
+          )
+          unless
+          ((sum(rate(mwa_http_requests_total{service="backend"}[5m])) or on() vector(0)) == 0)
+          or on() vector(0)
+
+      - record: mwa:http_latency_p95_seconds:5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(mwa_http_request_duration_seconds_bucket{service="backend"}[5m]))
+          )
+
+      - record: mwa:apdex_score:5m
+        expr: |
+          (
+            (
+              (
+                (sum(rate(mwa_http_request_duration_seconds_bucket{service="backend",le="0.3"}[5m])) or on() vector(0))
+                +
+                (sum(rate(mwa_http_request_duration_seconds_bucket{service="backend",le="1.2"}[5m])) or on() vector(0))
+              )
+              / 2
+            )
+            /
+            (sum(rate(mwa_http_request_duration_seconds_count{service="backend"}[5m])) or on() vector(0))
+          )
+          unless
+          ((sum(rate(mwa_http_request_duration_seconds_count{service="backend"}[5m])) or on() vector(0)) == 0)
+          or on() vector(0)
+
+      - record: mwa:search_success_ratio:5m
+        expr: |
+          (
+            (sum(rate(mwa_search_requests_total{result="success"}[5m])) or on() vector(0))
+            /
+            (sum(rate(mwa_search_requests_total[5m])) or on() vector(0))
+          )
+          unless
+          ((sum(rate(mwa_search_requests_total[5m])) or on() vector(0)) == 0)
+          or on() vector(0)
+
+      - record: mwa:search_result_exists_ratio:5m
+        expr: |
+          (
+            (sum(rate(mwa_search_requests_total{result="success"}[5m])) or on() vector(0))
+            /
+            (sum(rate(mwa_search_requests_total{result=~"success|zero_result"}[5m])) or on() vector(0))
+          )
+          unless
+          ((sum(rate(mwa_search_requests_total{result=~"success|zero_result"}[5m])) or on() vector(0)) == 0)
+          or on() vector(0)
+
+      - record: mwa:cart_add_success_ratio:5m
+        expr: |
+          (
+            (sum(rate(mwa_cart_add_total{result="success"}[5m])) or on() vector(0))
+            /
+            (sum(rate(mwa_cart_add_total[5m])) or on() vector(0))
+          )
+          unless
+          ((sum(rate(mwa_cart_add_total[5m])) or on() vector(0)) == 0)
+          or on() vector(0)
+
+      - record: mwa:order_create_success_ratio:5m
+        expr: |
+          (
+            (sum(rate(mwa_order_create_total{result="success"}[5m])) or on() vector(0))
+            /
+            (sum(rate(mwa_order_create_total[5m])) or on() vector(0))
+          )
+          unless
+          ((sum(rate(mwa_order_create_total[5m])) or on() vector(0)) == 0)
+          or on() vector(0)
+
+      - record: mwa:payment_completion_ratio:5m
+        expr: |
+          (
+            (sum(rate(mwa_payment_attempt_total{result="succeeded"}[5m])) or on() vector(0))
+            /
+            (sum(rate(mwa_payment_attempt_total{result="started"}[5m])) or on() vector(0))
+          )
+          unless
+          ((sum(rate(mwa_payment_attempt_total{result="started"}[5m])) or on() vector(0)) == 0)
+          or on() vector(0)
+
+      - record: mwa:cpu_usage_ratio:5m
+        expr: |
+          avg(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) / 100
+
+      - record: mwa:memory_usage_ratio:5m
+        expr: |
+          avg((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100) / 100
+
+      - record: mwa:db_connections_used_ratio:5m
+        expr: |
+          (sum(pg_stat_database_numbackends{datname="mwa"}) or on() vector(0))
+          /
+          clamp_min((max(pg_settings_max_connections) or on() vector(1)), 1)
+
+      - record: mwa:user_experience_status:5m
+        expr: |
+          clamp_min(
+            1
+            -
+            0.5 *
+            (
+              (
+                ((max(up{job="mwa-backend"}) or on() vector(0)) < bool 1)
+                +
+                ((mwa:http_5xx_ratio:5m or on() vector(0)) > bool 0.01)
+                +
+                ((mwa:http_latency_p95_seconds:5m or on() vector(0)) > bool 0.7)
+                +
+                ((mwa:apdex_score:5m or on() vector(1)) < bool 0.95)
+              ) > bool 0
+            )
+            -
+            0.5 *
+            (
+              (
+                ((max(up{job="mwa-backend"}) or on() vector(0)) < bool 1)
+                +
+                ((mwa:http_5xx_ratio:5m or on() vector(0)) > bool 0.03)
+                +
+                ((mwa:http_latency_p95_seconds:5m or on() vector(0)) > bool 1)
+                +
+                ((mwa:apdex_score:5m or on() vector(1)) < bool 0.85)
+              ) > bool 0
+            ),
+            0
+          )
+
+      - record: mwa:business_impact_status:5m
+        expr: |
+          clamp_min(
+            1
+            -
+            0.5 *
+            (
+              (
+                ((mwa:search_result_exists_ratio:5m or on() vector(0)) < bool 0.80)
+                +
+                ((mwa:cart_add_success_ratio:5m or on() vector(0)) < bool 0.99)
+                +
+                ((mwa:order_create_success_ratio:5m or on() vector(0)) < bool 0.99)
+                +
+                ((mwa:payment_completion_ratio:5m or on() vector(0)) < bool 0.95)
+              ) > bool 0
+            )
+            -
+            0.5 *
+            (
+              (
+                ((mwa:search_result_exists_ratio:5m or on() vector(0)) < bool 0.60)
+                +
+                ((mwa:cart_add_success_ratio:5m or on() vector(0)) < bool 0.95)
+                +
+                ((mwa:order_create_success_ratio:5m or on() vector(0)) < bool 0.95)
+                +
+                ((mwa:payment_completion_ratio:5m or on() vector(0)) < bool 0.90)
+              ) > bool 0
+            ),
+            0
+          )
+
+      - record: mwa:infra_health_status:5m
+        expr: |
+          clamp_min(
+            1
+            -
+            0.5 *
+            (
+              (
+                ((mwa:cpu_usage_ratio:5m or on() vector(1)) >= bool 0.80)
+                +
+                ((mwa:memory_usage_ratio:5m or on() vector(1)) >= bool 0.85)
+                +
+                ((mwa:db_connections_used_ratio:5m or on() vector(1)) >= bool 0.80)
+              ) > bool 0
+            )
+            -
+            0.5 *
+            (
+              (
+                ((mwa:cpu_usage_ratio:5m or on() vector(1)) >= bool 0.90)
+                +
+                ((mwa:memory_usage_ratio:5m or on() vector(1)) >= bool 0.95)
+                +
+                ((mwa:db_connections_used_ratio:5m or on() vector(1)) >= bool 0.90)
+              ) > bool 0
+            ),
+            0
+          )
+
+      - record: mwa:saturation_warning_score:5m
+        expr: |
+          ((mwa:cpu_usage_ratio:5m or on() vector(0)) >= bool 0.80)
+          +
+          ((mwa:memory_usage_ratio:5m or on() vector(0)) >= bool 0.85)
+          +
+          ((mwa:db_connections_used_ratio:5m or on() vector(0)) >= bool 0.80)
+
+      - record: mwa:thread_pool_saturation:5m
+        expr: |
+          vector(0)
+
+      - record: mwa:worker_queue_lag:5m
+        expr: |
+          vector(0)
+
+      - record: mwa:payment_processing_latency_p95_seconds:5m
+        expr: |
+          (
+            max(
+              histogram_quantile(
+                0.95,
+                sum by (le) (rate(mwa_payment_processing_latency_seconds_bucket[5m]))
+              )
+            )
+          ) or on() vector(0)
+
+      - record: mwa:order_create_success_ratio:24h_baseline
+        expr: |
+          (avg_over_time(mwa:order_create_success_ratio:5m[24h])) or on() vector(0)
+
+      - record: mwa:conversion_delta_vs_baseline:5m
+        expr: |
+          (mwa:order_create_success_ratio:5m or on() vector(0))
+          -
+          (mwa:order_create_success_ratio:24h_baseline or on() vector(0))
+
+      - record: mwa:estimated_revenue_loss_per_hour:5m
+        expr: |
+          vector(0)
+
+      - record: mwa:backend_restart_count:24h
+        expr: |
+          sum(changes(process_start_time_seconds{job="mwa-backend"}[24h]))

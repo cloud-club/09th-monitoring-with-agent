@@ -1,9 +1,14 @@
-import { collectDefaultMetrics, Counter, Histogram, Registry } from 'prom-client';
+import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from 'prom-client';
 
 type HttpRequestMetricInput = {
 	readonly method: string;
 	readonly handler: string;
 	readonly statusCode: number;
+	readonly durationSeconds: number;
+};
+
+type PaymentProcessingLatencyInput = {
+	readonly outcome: 'failed' | 'success';
 	readonly durationSeconds: number;
 };
 
@@ -60,6 +65,25 @@ const paymentAttemptTotal = new Counter({
 	registers: [metricsRegistry],
 });
 
+const logHeartbeatUnixtimeSeconds = new Gauge({
+	name: 'mwa_log_heartbeat_unixtime_seconds',
+	help: 'Latest unix timestamp for backend structured log heartbeat activity',
+	labelNames: ['service'],
+	registers: [metricsRegistry],
+});
+
+const paymentProcessingLatencySeconds = new Histogram({
+	name: 'mwa_payment_processing_latency_seconds',
+	help: 'Latency in seconds for backend payment attempt processing',
+	labelNames: ['outcome'],
+	buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+	registers: [metricsRegistry],
+});
+
+export function refreshLogHeartbeatMetric(timestampMs: number = Date.now()): void {
+	logHeartbeatUnixtimeSeconds.set({ service: BACKEND_SERVICE }, timestampMs / 1000);
+}
+
 export function observeHttpRequest(input: HttpRequestMetricInput): void {
 	httpRequestsTotal.inc({
 		service: BACKEND_SERVICE,
@@ -92,6 +116,15 @@ export function incrementOrderCreate(result: OrderCreateResult): void {
 
 export function incrementPaymentAttempt(result: PaymentAttemptResult): void {
 	paymentAttemptTotal.inc({ result });
+}
+
+export function observePaymentProcessingLatency(input: PaymentProcessingLatencyInput): void {
+	paymentProcessingLatencySeconds.observe(
+		{
+			outcome: input.outcome,
+		},
+		input.durationSeconds,
+	);
 }
 
 export const metricsContentType = metricsRegistry.contentType;

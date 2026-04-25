@@ -1,17 +1,17 @@
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import type { PaymentAttemptListResponse, PaymentAttemptResponse } from './payment.controller.types';
 import type { PaymentOutcome } from './payment.query';
+import process from 'node:process';
 
 import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
-import type { Response } from 'express';
 
 import { ok } from '../http/contracts';
 import { ERROR_CODES } from '../http/error-codes';
 import { HttpError } from '../http/http-error';
 import { AppLoggerService } from '../logging/app-logger.service';
-import { incrementPaymentAttempt } from '../metrics/metrics-registry';
-import { getRequestContext } from '../request-context/request-context';
+import { incrementPaymentAttempt, observePaymentProcessingLatency } from '../metrics/metrics-registry';
 import { BuyerAccessGuard } from '../request-context/buyer-access.guard';
+import { getRequestContext } from '../request-context/request-context';
 
 import { parseFailureCode, parseOutcome, parseRequestKey } from './payment.query';
 import { PaymentService } from './payment.service';
@@ -61,7 +61,8 @@ export class PaymentController {
 			requestKey = parseRequestKey(body.requestKey);
 			outcome = parseOutcome(body.outcome);
 			failureCode = parseFailureCode(outcome, body.failureCode);
-		} catch (error) {
+		}
+		catch (error) {
 			if (error instanceof HttpError && error.code === ERROR_CODES.VALIDATION_ERROR) {
 				incrementPaymentAttempt('validation_error');
 			}
@@ -78,7 +79,25 @@ export class PaymentController {
 				order_id: orderId,
 			},
 		});
-		const { attempt, created } = await this.paymentService.createAttempt(customerId, orderId, requestKey, outcome, failureCode);
+		const paymentProcessingStartTime = process.hrtime.bigint();
+
+		let attemptResult: { attempt: Awaited<ReturnType<PaymentService['createAttempt']>>['attempt']; created: boolean };
+		try {
+			attemptResult = await this.paymentService.createAttempt(customerId, orderId, requestKey, outcome, failureCode);
+			observePaymentProcessingLatency({
+				outcome: 'success',
+				durationSeconds: Number(process.hrtime.bigint() - paymentProcessingStartTime) / 1_000_000_000,
+			});
+		}
+		catch (error) {
+			observePaymentProcessingLatency({
+				outcome: 'failed',
+				durationSeconds: Number(process.hrtime.bigint() - paymentProcessingStartTime) / 1_000_000_000,
+			});
+			throw error;
+		}
+
+		const { attempt, created } = attemptResult;
 
 		if (created) {
 			incrementPaymentAttempt('started');

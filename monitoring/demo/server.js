@@ -11,6 +11,50 @@ const LOG_DIR = process.env.LOG_DIR || "/app/logs";
 const LOG_ACCESS = path.join(LOG_DIR, "mwa-access.log");
 const LOG_APP = path.join(LOG_DIR, "mwa-app.log");
 const SCENARIO_BACKEND_BASE_URL = process.env.SCENARIO_BACKEND_BASE_URL || process.env.BACKEND_BASE_URL || "http://127.0.0.1:8080";
+const MONITORING_PROMETHEUS_BASE_URL = process.env.MONITORING_PROMETHEUS_BASE_URL || "http://127.0.0.1:9090";
+const MONITORING_LOKI_BASE_URL = process.env.MONITORING_LOKI_BASE_URL || "http://127.0.0.1:3100";
+const MONITORING_GRAFANA_BASE_URL = process.env.MONITORING_GRAFANA_BASE_URL || "http://127.0.0.1:3000";
+
+const KPI_RESULT_LABELS = Object.freeze({
+  success: "success",
+  failure: "failure",
+});
+
+const KPI_DRILLDOWN_TARGETS = Object.freeze({
+  prometheus: "prometheus",
+  loki: "loki",
+  grafana: "grafana",
+});
+
+const KPI_TELEMETRY_ENDPOINTS = Object.freeze([
+  Object.freeze({ metricFamily: "mwa_search_requests_total", eventNames: ["search.executed"] }),
+  Object.freeze({ metricFamily: "mwa_http_requests_total", metricText: 'handler="/api/catalog/products/:productId"', eventNames: ["product.detail_viewed"] }),
+  Object.freeze({ metricFamily: "mwa_cart_add_total", eventNames: ["cart.item_added"] }),
+  Object.freeze({ metricFamily: "mwa_order_create_total", eventNames: ["order.created"] }),
+  Object.freeze({ metricFamily: "mwa_payment_attempt_total", eventNames: ["payment.started", "payment.failed", "payment.succeeded"] }),
+]);
+
+const KPI_ALERT_RULES = Object.freeze({
+  payment: ["PaymentFailureSpike"],
+  order: ["OrderCreateFailures"],
+  api: ["APIHighErrorRate", "APIHighLatencyP95"],
+});
+
+const KPI_STATE = {
+  scenarioRunsTotal: 0,
+  scenarioRunsPassed: 0,
+  summaryGenerationsTotal: 0,
+  summaryGenerationsSucceeded: 0,
+  drilldownChecksTotal: 0,
+  drilldownChecksSucceeded: 0,
+  alertCoverageChecksTotal: 0,
+  alertCoverageChecksSucceeded: 0,
+  actionableIncidentChecksTotal: 0,
+  actionableIncidentChecksSucceeded: 0,
+  falsePositiveRunsTotal: 0,
+};
+
+let currentTelemetryCompletenessRatio = 0;
 
 /**
  * 데모용 고정 상품(카탈로그).
@@ -1069,9 +1113,270 @@ async function executeScenario(scenario) {
   };
 }
 
+function clampRatio(numerator, denominator) {
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
+    return 0;
+  }
+
+  return numerator / denominator;
+}
+
+function getScenarioStepPaths(scenario) {
+  return Array.isArray(scenario?.steps)
+    ? scenario.steps
+      .map((step) => (typeof step?.path === "string" ? step.path : null))
+      .filter((stepPath) => stepPath !== null)
+    : [];
+}
+
+function getExpectedAlertNames(scenario, run) {
+  const alertNames = new Set();
+  const scenarioText = JSON.stringify({
+    name: scenario?.name,
+    steps: getScenarioStepPaths(scenario),
+  }).toLowerCase();
+
+  if (scenarioText.includes("payment")) {
+    KPI_ALERT_RULES.payment.forEach((alertName) => {
+      alertNames.add(alertName);
+    });
+  }
+
+  if (scenarioText.includes("/api/orders") || scenarioText.includes("order")) {
+    KPI_ALERT_RULES.order.forEach((alertName) => {
+      alertNames.add(alertName);
+    });
+  }
+
+  if (
+    scenarioText.includes("search")
+    || scenarioText.includes("catalog")
+    || scenarioText.includes("health")
+    || scenarioText.includes("metrics")
+    || scenarioText.includes("route-that-does-not-exist")
+  ) {
+    KPI_ALERT_RULES.api.forEach((alertName) => {
+      alertNames.add(alertName);
+    });
+  }
+
+  if (run?.summary?.passed === false && alertNames.size === 0) {
+    KPI_ALERT_RULES.api.forEach((alertName) => {
+      alertNames.add(alertName);
+    });
+  }
+
+  return [...alertNames];
+}
+
+async function safeFetchText(url) {
+  try {
+    const response = await fetch(url);
+    return {
+      ok: response.ok,
+      body: await response.text(),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      body: error instanceof Error ? error.message : "Unknown fetch failure",
+    };
+  }
+}
+
+async function safeFetchJson(url) {
+  try {
+    const response = await fetch(url);
+    return {
+      ok: response.ok,
+      body: await response.json(),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      body: null,
+      error: error instanceof Error ? error.message : "Unknown fetch failure",
+    };
+  }
+}
+
+async function probeDrilldownTargets() {
+  const probes = [
+    { target: KPI_DRILLDOWN_TARGETS.prometheus, url: `${MONITORING_PROMETHEUS_BASE_URL}/api/v1/query?query=up` },
+    { target: KPI_DRILLDOWN_TARGETS.loki, url: `${MONITORING_LOKI_BASE_URL}/ready` },
+    { target: KPI_DRILLDOWN_TARGETS.grafana, url: `${MONITORING_GRAFANA_BASE_URL}/api/health` },
+  ];
+
+  return Promise.all(probes.map(async (probe) => {
+    const response = await safeFetchText(probe.url);
+    return { target: probe.target, success: response.ok };
+  }));
+}
+
+function extractPrometheusAlertNames(payload) {
+  const groups = Array.isArray(payload?.data?.groups) ? payload.data.groups : [];
+  return groups.flatMap((group) => (
+    Array.isArray(group.rules)
+      ? group.rules.map((rule) => String(rule.name || "")).filter((name) => name.length > 0)
+      : []
+  ));
+}
+
+function extractActiveAlertNames(payload) {
+  const alerts = Array.isArray(payload?.data?.alerts) ? payload.data.alerts : [];
+  return alerts
+    .map((alert) => String(alert?.labels?.alertname || ""))
+    .filter((name) => name.length > 0);
+}
+
+async function probeAlertCoverage(expectedAlertNames) {
+  if (expectedAlertNames.length === 0) {
+    return false;
+  }
+
+  const [rulesResponse, alertsResponse] = await Promise.all([
+    safeFetchJson(`${MONITORING_PROMETHEUS_BASE_URL}/api/v1/rules`),
+    safeFetchJson(`${MONITORING_PROMETHEUS_BASE_URL}/api/v1/alerts`),
+  ]);
+
+  const discoveredAlertNames = new Set([
+    ...extractPrometheusAlertNames(rulesResponse.body),
+    ...extractActiveAlertNames(alertsResponse.body),
+  ]);
+
+  return expectedAlertNames.some((alertName) => discoveredAlertNames.has(alertName));
+}
+
+async function probeFalsePositiveAlert(run) {
+  if (run?.summary?.passed !== true) {
+    return false;
+  }
+
+  const alertsResponse = await safeFetchJson(`${MONITORING_PROMETHEUS_BASE_URL}/api/v1/alerts`);
+  const activeAlertNames = new Set(extractActiveAlertNames(alertsResponse.body));
+
+  return [
+    ...KPI_ALERT_RULES.api,
+    ...KPI_ALERT_RULES.order,
+    ...KPI_ALERT_RULES.payment,
+  ].some((alertName) => activeAlertNames.has(alertName));
+}
+
+function hasRequiredMetricFamily(metricsText, telemetryTarget) {
+  if (!metricsText.includes(telemetryTarget.metricFamily)) {
+    return false;
+  }
+
+  return typeof telemetryTarget.metricText === "string"
+    ? metricsText.includes(telemetryTarget.metricText)
+    : true;
+}
+
+function hasRequiredLogEvent(logBody, telemetryTarget) {
+  return telemetryTarget.eventNames.some((eventName) => logBody.includes(eventName));
+}
+
+async function probeTelemetryCompleteness() {
+  const [metricsResponse, logQueryResponse] = await Promise.all([
+    safeFetchText(`${SCENARIO_BACKEND_BASE_URL}/metrics`),
+    safeFetchJson(`${MONITORING_LOKI_BASE_URL}/loki/api/v1/query?query=${encodeURIComponent('{service_name="mwa-backend"} |= "event_name"')}`),
+  ]);
+
+  const metricsText = metricsResponse.ok ? metricsResponse.body : "";
+  const logBody = logQueryResponse.ok ? JSON.stringify(logQueryResponse.body) : "";
+  const successfulEndpoints = KPI_TELEMETRY_ENDPOINTS.filter((telemetryTarget) => (
+    hasRequiredMetricFamily(metricsText, telemetryTarget) && hasRequiredLogEvent(logBody, telemetryTarget)
+  )).length;
+
+  return clampRatio(successfulEndpoints, KPI_TELEMETRY_ENDPOINTS.length);
+}
+
+function updateKpiGauges() {
+  falsePositiveAlertRatio.set(clampRatio(KPI_STATE.falsePositiveRunsTotal, KPI_STATE.scenarioRunsTotal));
+  telemetryCompletenessRatio.set(currentTelemetryCompletenessRatio);
+  drilldownSuccessRatio.set(clampRatio(KPI_STATE.drilldownChecksSucceeded, KPI_STATE.drilldownChecksTotal));
+  summaryGenerationSuccessRatio.set(clampRatio(KPI_STATE.summaryGenerationsSucceeded, KPI_STATE.summaryGenerationsTotal));
+  actionableIncidentCoverageRatio.set(clampRatio(KPI_STATE.actionableIncidentChecksSucceeded, KPI_STATE.actionableIncidentChecksTotal));
+  scenarioReproductionRatio.set(clampRatio(KPI_STATE.scenarioRunsPassed, KPI_STATE.scenarioRunsTotal));
+}
+
+async function updateMonitoringKpis(scenario, run) {
+  KPI_STATE.scenarioRunsTotal += 1;
+  const scenarioRunSucceeded = run?.summary?.passed === true;
+  if (scenarioRunSucceeded) {
+    KPI_STATE.scenarioRunsPassed += 1;
+  }
+  scenarioRunsTotal.inc({
+    result: scenarioRunSucceeded ? KPI_RESULT_LABELS.success : KPI_RESULT_LABELS.failure,
+  });
+
+  KPI_STATE.summaryGenerationsTotal += 1;
+  const summaryGenerationSucceeded = Boolean(run?.summary && typeof run.summary.passed === "boolean");
+  if (summaryGenerationSucceeded) {
+    KPI_STATE.summaryGenerationsSucceeded += 1;
+  }
+  summaryGenerationsTotal.inc({
+    result: summaryGenerationSucceeded ? KPI_RESULT_LABELS.success : KPI_RESULT_LABELS.failure,
+  });
+
+  const drilldownResults = await probeDrilldownTargets();
+  drilldownResults.forEach((probe) => {
+    KPI_STATE.drilldownChecksTotal += 1;
+    if (probe.success) {
+      KPI_STATE.drilldownChecksSucceeded += 1;
+    }
+    drilldownChecksTotal.inc({
+      target: probe.target,
+      result: probe.success ? KPI_RESULT_LABELS.success : KPI_RESULT_LABELS.failure,
+    });
+  });
+
+  const failedScenario = run?.summary?.passed === false;
+  const alertCoverageSucceeded = failedScenario
+    ? await probeAlertCoverage(getExpectedAlertNames(scenario, run))
+    : false;
+
+  if (failedScenario) {
+    KPI_STATE.alertCoverageChecksTotal += 1;
+    if (alertCoverageSucceeded) {
+      KPI_STATE.alertCoverageChecksSucceeded += 1;
+    }
+    alertCoverageChecksTotal.inc({
+      result: alertCoverageSucceeded ? KPI_RESULT_LABELS.success : KPI_RESULT_LABELS.failure,
+    });
+  }
+
+  const actionableIncidentSucceeded = failedScenario
+    && alertCoverageSucceeded
+    && drilldownResults.every((probe) => probe.success)
+    && summaryGenerationSucceeded;
+
+  if (failedScenario) {
+    KPI_STATE.actionableIncidentChecksTotal += 1;
+    if (actionableIncidentSucceeded) {
+      KPI_STATE.actionableIncidentChecksSucceeded += 1;
+    }
+    actionableIncidentChecksTotal.inc({
+      result: actionableIncidentSucceeded ? KPI_RESULT_LABELS.success : KPI_RESULT_LABELS.failure,
+    });
+  }
+
+  if (await probeFalsePositiveAlert(run)) {
+    KPI_STATE.falsePositiveRunsTotal += 1;
+  }
+
+  currentTelemetryCompletenessRatio = await probeTelemetryCompleteness();
+  updateKpiGauges();
+}
+
 function renderScenarioPage() {
   const templatesJson = escapeForInlineScript(SCENARIO_TEMPLATES);
   const defaultTemplateId = SCENARIO_TEMPLATES[0]?.id || "";
+  const monitoringLinksJson = escapeForInlineScript({
+    prometheus: MONITORING_PROMETHEUS_BASE_URL,
+    loki: MONITORING_LOKI_BASE_URL,
+    grafana: MONITORING_GRAFANA_BASE_URL,
+  });
 
   return `<!DOCTYPE html>
 <html lang="ko">
@@ -1083,103 +1388,124 @@ function renderScenarioPage() {
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
     :root {
       color-scheme: dark;
-      --bg: #0f172a;
-      --panel: #111827;
-      --panel-2: #1e293b;
-      --border: #334155;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --green: #22c55e;
-      --green-2: #16a34a;
-      --red: #f87171;
-      --amber: #facc15;
-      --blue: #38bdf8;
+      --bg: #101216;
+      --surface: #181c22;
+      --surface-2: #202630;
+      --surface-3: #11151b;
+      --border: #343c48;
+      --border-strong: #566273;
+      --text: #f4f7fb;
+      --muted: #9aa7b8;
+      --green: #2dd36f;
+      --green-2: #1fb95c;
+      --red: #ff6b6b;
+      --amber: #f4bf45;
+      --blue: #5bb8ff;
+      --violet: #b69cff;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
       font-family: 'IBM Plex Sans', system-ui, sans-serif;
-      background: radial-gradient(circle at top, #1e293b 0, #0f172a 48%);
+      background: var(--bg);
       color: var(--text);
-      padding: 24px;
+      padding: 20px;
     }
     a { color: var(--blue); }
     code, pre, textarea, .mono { font-family: 'JetBrains Mono', monospace; }
     .shell {
-      max-width: 1440px;
+      max-width: 1520px;
       margin: 0 auto;
       display: grid;
-      gap: 20px;
+      gap: 14px;
     }
-    .hero, .panel {
-      background: rgba(15, 23, 42, 0.92);
-      border: 1px solid rgba(148, 163, 184, 0.18);
-      border-radius: 18px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
-    }
-    .hero {
-      padding: 28px;
-      display: flex;
-      gap: 16px;
-      flex-wrap: wrap;
-      align-items: end;
-      justify-content: space-between;
-    }
-    .hero h1 {
-      margin: 0 0 10px;
-      font-size: clamp(30px, 5vw, 42px);
-      line-height: 1.05;
-    }
-    .hero p {
-      margin: 0;
-      max-width: 760px;
-      color: var(--muted);
-      line-height: 1.6;
-    }
-    .hero-meta {
+    .app-header {
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
-      margin-top: 16px;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      padding: 0 0 14px;
+    }
+    .title-block {
+      display: grid;
+      gap: 4px;
+    }
+    .title-block h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+    .title-block p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .header-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
     }
     .chip {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      border: 1px solid rgba(34, 197, 94, 0.35);
-      background: rgba(34, 197, 94, 0.12);
-      color: #dcfce7;
-      border-radius: 999px;
-      padding: 8px 12px;
+      min-height: 28px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: #d7e2ef;
+      border-radius: 6px;
+      padding: 5px 9px;
       font-size: 12px;
-      letter-spacing: 0.02em;
+      white-space: nowrap;
     }
     .layout {
       display: grid;
-      grid-template-columns: 320px minmax(0, 1fr);
-      gap: 20px;
+      grid-template-columns: 312px minmax(0, 1fr) 420px;
+      gap: 14px;
+      align-items: start;
     }
-    .sidebar, .workspace {
+    .sidebar, .workspace, .inspector {
       display: grid;
-      gap: 20px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 14px;
+      min-width: 0;
     }
-    .panel { padding: 18px; }
-    .panel h2, .panel h3 { margin: 0 0 12px; }
-    .panel p { margin: 0; color: var(--muted); }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      min-width: 0;
+    }
+    .panel h2, .panel h3 { margin: 0 0 8px; font-size: 15px; letter-spacing: 0; }
+    .panel p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
     .template-list {
       display: grid;
-      gap: 12px;
-      margin-top: 16px;
+      gap: 10px;
+      max-height: calc(100vh - 208px);
+      overflow: auto;
+      padding-right: 2px;
     }
     .template-group {
       display: grid;
-      gap: 12px;
+      gap: 8px;
     }
     .template-group + .template-group {
-      margin-top: 12px;
-      padding-top: 16px;
-      border-top: 1px solid rgba(148, 163, 184, 0.12);
+      margin-top: 6px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
     }
     .template-group-title {
       display: flex;
@@ -1200,156 +1526,176 @@ function renderScenarioPage() {
     .template-card {
       width: 100%;
       border: 1px solid var(--border);
-      border-radius: 14px;
-      background: rgba(30, 41, 59, 0.55);
+      border-radius: 8px;
+      background: var(--surface-3);
       color: var(--text);
       text-align: left;
-      padding: 14px;
+      padding: 11px;
       cursor: pointer;
-      transition: border-color 200ms ease, background-color 200ms ease, transform 200ms ease;
+      transition: border-color 160ms ease, background-color 160ms ease;
     }
     .template-card:hover,
     .template-card:focus-visible {
-      border-color: rgba(56, 189, 248, 0.6);
-      background: rgba(30, 41, 59, 0.88);
-      transform: translateY(-1px);
+      border-color: var(--blue);
+      background: #172232;
       outline: none;
     }
     .template-card.is-active {
-      border-color: rgba(34, 197, 94, 0.7);
-      background: rgba(34, 197, 94, 0.14);
+      border-color: var(--green);
+      background: #15271e;
     }
     .template-card strong {
       display: block;
-      margin-bottom: 6px;
+      margin-bottom: 5px;
       font-size: 15px;
+    }
+    .template-meta {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 9px;
+    }
+    .template-meta span {
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: #cbd5e1;
+      font-size: 11px;
+      padding: 3px 6px;
     }
     .editor-toolbar, .result-toolbar {
       display: flex;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
     .button-row {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
     }
     button {
       border: none;
-      border-radius: 12px;
-      padding: 11px 16px;
+      border-radius: 7px;
+      padding: 9px 12px;
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
-      transition: background-color 200ms ease, transform 200ms ease, opacity 200ms ease;
+      transition: background-color 160ms ease, border-color 160ms ease, opacity 160ms ease;
     }
+    button:disabled { cursor: progress; opacity: 0.65; }
     button:hover,
     button:focus-visible {
-      transform: translateY(-1px);
       outline: none;
     }
-    .button-primary { background: var(--green); color: #052e16; }
+    .button-primary { background: var(--green); color: #07170d; }
     .button-primary:hover, .button-primary:focus-visible { background: var(--green-2); color: white; }
-    .button-secondary { background: rgba(51, 65, 85, 0.9); color: var(--text); }
-    .button-secondary:hover, .button-secondary:focus-visible { background: rgba(71, 85, 105, 1); }
+    .button-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong); }
+    .button-secondary:hover, .button-secondary:focus-visible { background: #293241; }
     .button-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
-    .button-ghost:hover, .button-ghost:focus-visible { background: rgba(51, 65, 85, 0.55); color: var(--text); }
+    .button-ghost:hover, .button-ghost:focus-visible { background: var(--surface-2); color: var(--text); }
     textarea {
       width: 100%;
-      min-height: 420px;
+      min-height: 560px;
       resize: vertical;
-      border-radius: 14px;
+      border-radius: 8px;
       border: 1px solid var(--border);
-      background: #020617;
+      background: #0b0f14;
       color: var(--text);
-      padding: 16px;
+      padding: 14px;
       font-size: 13px;
       line-height: 1.6;
     }
+    textarea:focus {
+      outline: 2px solid rgba(91, 184, 255, 0.25);
+      border-color: var(--blue);
+    }
     .status-line {
       display: flex;
-      gap: 12px;
+      gap: 8px;
       flex-wrap: wrap;
       align-items: center;
-      margin-top: 14px;
+      margin-top: 10px;
       color: var(--muted);
       font-size: 13px;
     }
     .status-pill {
-      border-radius: 999px;
-      padding: 6px 10px;
+      border-radius: 6px;
+      padding: 5px 8px;
       font-size: 12px;
       font-weight: 600;
     }
-    .status-valid { background: rgba(34, 197, 94, 0.14); color: #bbf7d0; }
-    .status-invalid { background: rgba(248, 113, 113, 0.14); color: #fecaca; }
-    .status-running { background: rgba(250, 204, 21, 0.14); color: #fde68a; }
+    .status-valid { background: rgba(45, 211, 111, 0.14); color: #bff6d2; }
+    .status-invalid { background: rgba(255, 107, 107, 0.14); color: #ffd2d2; }
+    .status-running { background: rgba(244, 191, 69, 0.14); color: #ffe7a3; }
     .error-list {
       margin: 12px 0 0;
       padding-left: 18px;
-      color: #fecaca;
+      color: #ffd2d2;
       display: grid;
       gap: 6px;
     }
     .summary-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 18px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
     }
     .summary-card {
       border: 1px solid var(--border);
-      border-radius: 14px;
-      background: rgba(30, 41, 59, 0.48);
-      padding: 14px;
+      border-radius: 8px;
+      background: var(--surface-3);
+      padding: 10px;
     }
     .summary-card strong {
       display: block;
-      font-size: 24px;
-      margin-top: 6px;
+      font-size: 22px;
+      margin-top: 4px;
     }
     .result-list {
       display: grid;
-      gap: 14px;
+      gap: 10px;
+      max-height: calc(100vh - 268px);
+      overflow: auto;
+      padding-right: 2px;
     }
     .result-card {
       border: 1px solid var(--border);
-      border-radius: 16px;
-      background: rgba(2, 6, 23, 0.72);
+      border-radius: 8px;
+      background: var(--surface-3);
       overflow: hidden;
     }
     .result-head {
-      padding: 16px;
+      padding: 12px;
       display: flex;
       justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
-      border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+      border-bottom: 1px solid var(--border);
     }
     .result-pass { border-left: 4px solid var(--green); }
     .result-fail { border-left: 4px solid var(--red); }
     .result-meta {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
       color: var(--muted);
       font-size: 12px;
+      margin-top: 4px;
     }
     .result-body {
-      padding: 16px;
+      padding: 12px;
       display: grid;
-      gap: 14px;
+      gap: 10px;
     }
     pre {
       margin: 0;
-      border-radius: 12px;
-      border: 1px solid rgba(148, 163, 184, 0.16);
-      background: #020617;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #0b0f14;
       color: #e2e8f0;
-      padding: 14px;
+      padding: 10px;
       white-space: pre-wrap;
       word-break: break-word;
       overflow-wrap: anywhere;
@@ -1358,28 +1704,83 @@ function renderScenarioPage() {
     }
     .assertion-list {
       display: grid;
-      gap: 8px;
+      gap: 7px;
     }
     .assertion-item {
-      border-radius: 12px;
-      padding: 10px 12px;
-      border: 1px solid rgba(148, 163, 184, 0.15);
-      background: rgba(15, 23, 42, 0.75);
+      border-radius: 8px;
+      padding: 9px 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-3);
       font-size: 13px;
     }
-    .assertion-item.pass { border-color: rgba(34, 197, 94, 0.4); }
-    .assertion-item.fail { border-color: rgba(248, 113, 113, 0.4); }
+    .assertion-item.pass { border-color: rgba(45, 211, 111, 0.45); }
+    .assertion-item.fail { border-color: rgba(255, 107, 107, 0.45); }
+    .observability-list {
+      display: grid;
+      gap: 8px;
+    }
+    .observability-link {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-3);
+      padding: 10px;
+      color: var(--text);
+      text-decoration: none;
+      min-width: 0;
+    }
+    .observability-link > span { min-width: 0; }
+    .observability-link:hover,
+    .observability-link:focus-visible {
+      border-color: var(--blue);
+      outline: none;
+    }
+    .link-target {
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 180px;
+    }
+    .execution-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .execution-metric {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-3);
+      padding: 9px;
+    }
+    .execution-metric strong {
+      display: block;
+      margin-top: 3px;
+      font-size: 15px;
+    }
     .muted { color: var(--muted); }
     .tiny { font-size: 12px; }
-    @media (max-width: 980px) {
+    @media (max-width: 1240px) {
       body { padding: 16px; }
-      .layout { grid-template-columns: 1fr; }
-      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .layout { grid-template-columns: 300px minmax(0, 1fr); }
+      .inspector { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+      .result-list { max-height: none; }
+      textarea { min-height: 460px; }
     }
     @media (max-width: 640px) {
-      .hero, .panel { padding: 16px; }
+      body { padding: 12px; }
+      .layout, .inspector { grid-template-columns: 1fr; }
+      .app-header { align-items: flex-start; }
+      .header-meta { justify-content: flex-start; width: 100%; }
       .summary-grid { grid-template-columns: 1fr; }
-      textarea { min-height: 320px; }
+      .execution-grid { grid-template-columns: 1fr; }
+      .template-list { max-height: none; }
+      textarea { min-height: 360px; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
@@ -1388,30 +1789,34 @@ function renderScenarioPage() {
 </head>
 <body>
   <main class="shell">
-    <section class="hero">
-      <div>
+    <header class="app-header">
+      <div class="title-block">
         <h1>Scenario Testing Web</h1>
-        <p>성공, 실패, 텍스트 메트릭 응답까지 같은 UI에서 실행하고 검증합니다. 이 화면은 demo host 위에 붙는 내부 QA 콘솔이며, 실제 backend API 계약을 직접 확인합니다.</p>
-        <div class="hero-meta">
-          <span class="chip mono">backend ${escapeHtml(SCENARIO_BACKEND_BASE_URL)}</span>
-          <span class="chip">GET-only guardrails</span>
-          <span class="chip">sequential / parallel</span>
-        </div>
+        <p>API 시나리오를 선택, 편집, 실행하고 observability 진입점까지 이어서 확인합니다.</p>
       </div>
-      <div class="tiny muted">Run the demo host on a different port than the backend when both run locally.</div>
-    </section>
+      <div class="header-meta">
+        <span class="chip mono">backend ${escapeHtml(SCENARIO_BACKEND_BASE_URL)}</span>
+        <span class="chip">sequential / parallel</span>
+        <span class="chip">guarded paths</span>
+      </div>
+    </header>
 
     <section class="layout">
       <aside class="sidebar">
         <section class="panel">
-          <h2>Scenario Library</h2>
-          <p>실제 backend 계약을 바로 확인할 수 있는 최소 템플릿만 제공합니다.</p>
+          <div class="panel-header">
+            <div>
+              <h2>Scenario Library</h2>
+              <p>표준 템플릿을 불러와 바로 실행합니다.</p>
+            </div>
+            <span id="template-count" class="chip">0</span>
+          </div>
           <div id="template-list" class="template-list"></div>
         </section>
         <section class="panel">
           <h3>Guardrails</h3>
           <div class="assertion-list">
-            <div class="assertion-item">허용 path: <span class="mono">/health</span>, <span class="mono">/metrics</span>, <span class="mono">/api/catalog/products*</span></div>
+            <div class="assertion-item">허용 path: <span class="mono">/health</span>, <span class="mono">/metrics</span>, <span class="mono">/api/*</span></div>
             <div class="assertion-item">허용 method: <span class="mono">GET / POST / PATCH / DELETE</span></div>
             <div class="assertion-item">지원 assertion: status, json_path, text_includes, content_type_includes</div>
             <div class="assertion-item">사용자 흐름은 <span class="mono">x-customer-id</span>, body, 이전 step 결과 참조를 사용할 수 있습니다.</div>
@@ -1423,7 +1828,7 @@ function renderScenarioPage() {
         <section class="panel">
           <div class="editor-toolbar">
             <div>
-              <h2 style="margin-bottom:6px">Scenario Editor</h2>
+              <h2>Scenario Editor</h2>
               <p id="scenario-description">Template + JSON editing</p>
             </div>
             <div class="button-row">
@@ -1439,14 +1844,25 @@ function renderScenarioPage() {
           </div>
           <ul id="validation-errors" class="error-list" hidden></ul>
         </section>
+      </section>
 
+      <aside class="inspector">
         <section class="panel">
           <div class="result-toolbar">
             <div>
-              <h2 style="margin-bottom:6px">Results</h2>
-              <p>실행 결과와 assertion verdict를 step 단위로 확인합니다.</p>
+              <h2>Execution</h2>
+              <p>선택한 템플릿의 실행 범위를 확인합니다.</p>
             </div>
             <div id="run-status" class="status-pill status-valid">No run yet</div>
+          </div>
+          <div id="execution-grid" class="execution-grid"></div>
+        </section>
+        <section class="panel">
+          <div class="result-toolbar">
+            <div>
+              <h2>Results</h2>
+              <p>실행 결과와 assertion verdict를 step 단위로 확인합니다.</p>
+            </div>
           </div>
           <div id="summary-grid" class="summary-grid" hidden></div>
           <div id="result-list" class="result-list">
@@ -1455,15 +1871,26 @@ function renderScenarioPage() {
             </div>
           </div>
         </section>
-      </section>
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Observability</h2>
+              <p>실행 후 메트릭과 로그 확인으로 바로 이동합니다.</p>
+            </div>
+          </div>
+          <div id="observability-list" class="observability-list"></div>
+        </section>
+      </aside>
     </section>
   </main>
 
   <script>
     const templates = ${templatesJson};
     const defaultTemplateId = ${escapeForInlineScript(defaultTemplateId)};
+    const monitoringLinks = ${monitoringLinksJson};
 
     const templateList = document.getElementById('template-list');
+    const templateCount = document.getElementById('template-count');
     const editor = document.getElementById('scenario-editor');
     const scenarioDescription = document.getElementById('scenario-description');
     const validationPill = document.getElementById('validation-pill');
@@ -1471,6 +1898,8 @@ function renderScenarioPage() {
     const summaryGrid = document.getElementById('summary-grid');
     const resultList = document.getElementById('result-list');
     const runStatus = document.getElementById('run-status');
+    const executionGrid = document.getElementById('execution-grid');
+    const observabilityList = document.getElementById('observability-list');
     const runButton = document.getElementById('run-button');
     const validateButton = document.getElementById('validate-button');
     const resetButton = document.getElementById('reset-button');
@@ -1481,29 +1910,70 @@ function renderScenarioPage() {
       return templates.find((template) => template.id === id) || templates[0];
     }
 
+    function escapeText(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function getStepCount(template) {
+      return Array.isArray(template.steps) ? template.steps.length : 0;
+    }
+
+    function renderExecutionProfile(template) {
+      const steps = Array.isArray(template.steps) ? template.steps : [];
+      const assertionCount = steps.reduce((sum, step) => sum + (Array.isArray(step.assertions) ? step.assertions.length : 0), 0);
+      const methods = [...new Set(steps.map((step) => step.method || 'GET'))].join(', ') || 'n/a';
+
+      executionGrid.innerHTML = [
+        ['Mode', template.mode || 'n/a'],
+        ['Steps', String(steps.length)],
+        ['Assertions', String(assertionCount)],
+        ['Methods', methods],
+        ['Timeout', steps.some((step) => step.timeoutMs) ? 'custom' : '8s default'],
+        ['Endpoint', '/qa/scenarios/run'],
+      ].map(([label, value]) => '<div class="execution-metric"><span class="muted tiny">' + escapeText(label) + '</span><strong>' + escapeText(value) + '</strong></div>').join('');
+    }
+
+    function buildMonitoringUrls(run) {
+      const encodedLogQuery = encodeURIComponent('{service_name="mwa-backend"} |= "event_name"');
+      const encodedScenarioMetric = encodeURIComponent('mwa_scenario_runs_total');
+      const encodedHttpMetric = encodeURIComponent('rate(mwa_http_requests_total[5m])');
+
+      return [
+        ['Prometheus', monitoringLinks.prometheus + '/graph?g0.expr=' + encodedScenarioMetric, 'scenario run counters'],
+        ['HTTP Metrics', monitoringLinks.prometheus + '/graph?g0.expr=' + encodedHttpMetric, 'backend request rate'],
+        ['Loki', monitoringLinks.loki + '/loki/api/v1/query?query=' + encodedLogQuery, 'backend event logs'],
+        ['Grafana', monitoringLinks.grafana + '/dashboards', 'provisioned dashboards'],
+      ].map(([label, href, description]) => ({ label, href, description }));
+    }
+
+    function renderObservability(run = null) {
+      const links = buildMonitoringUrls(run);
+      observabilityList.innerHTML = links.map((link) => (
+        '<a class="observability-link" href="' + escapeText(link.href) + '" target="_blank" rel="noreferrer">' +
+          '<span><strong>' + escapeText(link.label) + '</strong><br><span class="tiny muted">' + escapeText(link.description) + '</span></span>' +
+          '<span class="link-target mono">' + escapeText(link.href) + '</span>' +
+        '</a>'
+      )).join('');
+    }
+
     function setValidationState(state, errors = []) {
       validationPill.className = 'status-pill ' + (state === 'valid' ? 'status-valid' : state === 'running' ? 'status-running' : 'status-invalid');
       validationPill.textContent = state === 'valid' ? 'Valid scenario' : state === 'running' ? 'Running...' : 'Validation failed';
       validationErrors.hidden = errors.length === 0;
-      validationErrors.innerHTML = errors.map((error) => '<li>' + error.replace(/</g, '&lt;') + '</li>').join('');
+      validationErrors.innerHTML = errors.map((error) => '<li>' + escapeText(error) + '</li>').join('');
     }
 
     function renderTemplates() {
-      const groups = [
-        {
-          title: 'Buyer journey scenarios',
-          matcher: (template) => template.id.startsWith('buyer-'),
-        },
-        {
-          title: 'Backend API scenarios',
-          matcher: (template) => !template.id.startsWith('buyer-') && template.path === undefined,
-        },
-      ];
-
       const buyerTemplates = templates.filter((template) => template.id.startsWith('buyer-'));
       const nonBuyerTemplates = templates.filter((template) => !template.id.startsWith('buyer-'));
       const backendTemplates = nonBuyerTemplates.filter((template) => template.id !== 'health-success' && template.id !== 'metrics-text-check' && template.id !== 'health-metrics-parallel' && template.id !== 'route-not-found');
       const coreTemplates = nonBuyerTemplates.filter((template) => !backendTemplates.includes(template));
+      templateCount.textContent = String(templates.length) + ' total';
 
       const renderGroup = (title, groupTemplates) => {
         if (groupTemplates.length === 0) {
@@ -1512,10 +1982,14 @@ function renderScenarioPage() {
 
         const cards = groupTemplates.map((template) => {
           const activeClass = template.id === activeTemplateId ? ' is-active' : '';
-          return '<button class="template-card' + activeClass + '" type="button" data-template-id="' + template.id + '"><strong>' + template.name + '</strong><span class="muted tiny">' + template.description + '</span></button>';
+          return '<button class="template-card' + activeClass + '" type="button" data-template-id="' + escapeText(template.id) + '">' +
+            '<strong>' + escapeText(template.name) + '</strong>' +
+            '<span class="muted tiny">' + escapeText(template.description) + '</span>' +
+            '<div class="template-meta"><span>' + escapeText(template.mode || 'n/a') + '</span><span>' + getStepCount(template) + ' steps</span></div>' +
+          '</button>';
         }).join('');
 
-        return '<section class="template-group"><h3 class="template-group-title"><span>' + title + '</span><span class="template-group-count">' + groupTemplates.length + ' scenarios</span></h3>' + cards + '</section>';
+        return '<section class="template-group"><h3 class="template-group-title"><span>' + escapeText(title) + '</span><span class="template-group-count">' + groupTemplates.length + ' scenarios</span></h3>' + cards + '</section>';
       };
 
       templateList.innerHTML = [
@@ -1531,6 +2005,8 @@ function renderScenarioPage() {
       scenarioDescription.textContent = template.description;
       editor.value = JSON.stringify(template, null, 2);
       renderTemplates();
+      renderExecutionProfile(template);
+      renderObservability();
       setValidationState('valid');
     }
 
@@ -1555,6 +2031,7 @@ function renderScenarioPage() {
       }
 
       setValidationState('valid');
+      renderExecutionProfile(scenario);
       return scenario;
     }
 
@@ -1565,7 +2042,7 @@ function renderScenarioPage() {
         ['Total steps', String(summary.totalSteps)],
         ['Passed', String(summary.passedSteps)],
         ['Failed', String(summary.failedSteps)],
-      ].map(([label, value]) => '<article class="summary-card"><span class="muted tiny">' + label + '</span><strong>' + value + '</strong></article>').join('');
+      ].map(([label, value]) => '<article class="summary-card"><span class="muted tiny">' + escapeText(label) + '</span><strong>' + escapeText(value) + '</strong></article>').join('');
       runStatus.className = 'status-pill ' + (summary.passed ? 'status-valid' : 'status-invalid');
       runStatus.textContent = (summary.passed ? 'Passed' : 'Failed') + ' · ' + backendBaseUrl;
     }
@@ -1575,11 +2052,11 @@ function renderScenarioPage() {
         const assertionMarkup = result.assertions.length === 0
           ? '<div class="assertion-item">No assertions executed</div>'
           : result.assertions.map((assertion) => {
-              return '<div class="assertion-item ' + (assertion.passed ? 'pass' : 'fail') + '"><strong>' + (assertion.passed ? 'PASS' : 'FAIL') + '</strong> · ' + assertion.label + '<div class="tiny muted">expected: ' + JSON.stringify(assertion.expected) + ' · actual: ' + JSON.stringify(assertion.actual) + '</div></div>';
+              return '<div class="assertion-item ' + (assertion.passed ? 'pass' : 'fail') + '"><strong>' + (assertion.passed ? 'PASS' : 'FAIL') + '</strong> · ' + escapeText(assertion.label) + '<div class="tiny muted">expected: ' + escapeText(JSON.stringify(assertion.expected)) + ' · actual: ' + escapeText(JSON.stringify(assertion.actual)) + '</div></div>';
             }).join('');
-        const errorMarkup = result.error ? '<div class="assertion-item fail"><strong>Execution error</strong><div class="tiny muted">' + result.error.replace(/</g, '&lt;') + '</div></div>' : '';
+        const errorMarkup = result.error ? '<div class="assertion-item fail"><strong>Execution error</strong><div class="tiny muted">' + escapeText(result.error) + '</div></div>' : '';
         const requestPreview = JSON.stringify({ headers: result.requestHeaders || {}, body: result.requestBody }, null, 2);
-        return '<article class="result-card ' + (result.passed ? 'result-pass' : 'result-fail') + '"><div class="result-head"><div><strong>' + result.label + '</strong><div class="result-meta"><span class="mono">' + result.method + ' ' + result.path + '</span><span>' + (result.status === null ? 'NO RESPONSE' : 'status ' + result.status) + '</span><span>' + result.durationMs + 'ms</span><span>' + (result.contentType || 'n/a') + '</span></div></div><div class="status-pill ' + (result.passed ? 'status-valid' : 'status-invalid') + '">' + (result.passed ? 'PASS' : 'FAIL') + '</div></div><div class="result-body"><div><div class="tiny muted" style="margin-bottom:8px">Request</div><pre>' + requestPreview.replace(/</g, '&lt;') + '</pre></div><div><div class="tiny muted" style="margin-bottom:8px">Response preview</div><pre>' + (result.preview || '').replace(/</g, '&lt;') + '</pre></div>' + errorMarkup + '<div><div class="tiny muted" style="margin-bottom:8px">Assertions</div><div class="assertion-list">' + assertionMarkup + '</div></div></div></article>';
+        return '<article class="result-card ' + (result.passed ? 'result-pass' : 'result-fail') + '"><div class="result-head"><div><strong>' + escapeText(result.label) + '</strong><div class="result-meta"><span class="mono">' + escapeText(result.method + ' ' + result.path) + '</span><span>' + (result.status === null ? 'NO RESPONSE' : 'status ' + escapeText(result.status)) + '</span><span>' + escapeText(result.durationMs) + 'ms</span><span>' + escapeText(result.contentType || 'n/a') + '</span></div></div><div class="status-pill ' + (result.passed ? 'status-valid' : 'status-invalid') + '">' + (result.passed ? 'PASS' : 'FAIL') + '</div></div><div class="result-body"><div><div class="tiny muted" style="margin-bottom:8px">Request</div><pre>' + escapeText(requestPreview) + '</pre></div><div><div class="tiny muted" style="margin-bottom:8px">Response preview</div><pre>' + escapeText(result.preview || '') + '</pre></div>' + errorMarkup + '<div><div class="tiny muted" style="margin-bottom:8px">Assertions</div><div class="assertion-list">' + assertionMarkup + '</div></div></div></article>';
       }).join('');
     }
 
@@ -1632,6 +2109,7 @@ function renderScenarioPage() {
       setValidationState('valid');
       renderSummary(payload.run.summary, payload.run.mode, payload.run.backendBaseUrl);
       renderResults(payload.run.results);
+      renderObservability(payload.run);
       runButton.disabled = false;
     });
 
@@ -1750,6 +2228,91 @@ const productOrders = new client.Counter({
   registers: [register],
 });
 
+const summaryGenerationsTotal = new client.Counter({
+  name: "mwa_monitoring_summary_generations_total",
+  help: "시나리오 실행 후 summary 생성 결과 누적 수",
+  labelNames: ["result"],
+  registers: [register],
+});
+
+const scenarioRunsTotal = new client.Counter({
+  name: "mwa_monitoring_scenario_runs_total",
+  help: "시나리오 실행 결과 누적 수",
+  labelNames: ["result"],
+  registers: [register],
+});
+
+const drilldownChecksTotal = new client.Counter({
+  name: "mwa_monitoring_drilldown_checks_total",
+  help: "Prometheus/Loki/Grafana 드릴다운 프로브 결과 누적 수",
+  labelNames: ["target", "result"],
+  registers: [register],
+});
+
+const alertCoverageChecksTotal = new client.Counter({
+  name: "mwa_monitoring_alert_coverage_checks_total",
+  help: "실패 시나리오 alert coverage 점검 결과 누적 수",
+  labelNames: ["result"],
+  registers: [register],
+});
+
+const actionableIncidentChecksTotal = new client.Counter({
+  name: "mwa_monitoring_actionable_incident_checks_total",
+  help: "행동 가능한 인시던트 coverage 점검 결과 누적 수",
+  labelNames: ["result"],
+  registers: [register],
+});
+
+const falsePositiveAlertRatio = new client.Gauge({
+  name: "mwa_monitoring_false_positive_alert_ratio",
+  help: "passed summary 대비 false positive alert 비율",
+  registers: [register],
+});
+
+const telemetryCompletenessRatio = new client.Gauge({
+  name: "mwa_monitoring_telemetry_completeness_ratio",
+  help: "핵심 endpoint 텔레메트리 완전성 비율",
+  registers: [register],
+});
+
+const drilldownSuccessRatio = new client.Gauge({
+  name: "mwa_monitoring_drilldown_success_ratio",
+  help: "드릴다운 프로브 성공 비율",
+  registers: [register],
+});
+
+const summaryGenerationSuccessRatio = new client.Gauge({
+  name: "mwa_monitoring_summary_generation_success_ratio",
+  help: "summary 생성 성공 비율",
+  registers: [register],
+});
+
+const actionableIncidentCoverageRatio = new client.Gauge({
+  name: "mwa_monitoring_actionable_incident_coverage_ratio",
+  help: "행동 가능한 인시던트 coverage 비율",
+  registers: [register],
+});
+
+const scenarioReproductionRatio = new client.Gauge({
+  name: "mwa_monitoring_scenario_reproduction_ratio",
+  help: "시나리오 재현 성공 비율",
+  registers: [register],
+});
+
+summaryGenerationsTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
+summaryGenerationsTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
+scenarioRunsTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
+scenarioRunsTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
+Object.values(KPI_DRILLDOWN_TARGETS).forEach((target) => {
+  drilldownChecksTotal.inc({ target, result: KPI_RESULT_LABELS.success }, 0);
+  drilldownChecksTotal.inc({ target, result: KPI_RESULT_LABELS.failure }, 0);
+});
+alertCoverageChecksTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
+alertCoverageChecksTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
+actionableIncidentChecksTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
+actionableIncidentChecksTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
+updateKpiGauges();
+
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -1817,6 +2380,7 @@ app.post("/qa/scenarios/run", async (req, res) => {
   }
 
   const run = await executeScenario(scenario);
+  await updateMonitoringKpis(scenario, run);
   res.json({
     success: true,
     run,

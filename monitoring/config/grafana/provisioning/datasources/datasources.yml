@@ -11,6 +11,8 @@ deleteDatasources:
     orgId: 1
   - name: Loki
     orgId: 1
+  - name: Tempo
+    orgId: 1
 
 datasources:
   - name: Prometheus
@@ -31,4 +33,11 @@ datasources:
     # 위와 동일: 질의는 Grafana 컨테이너 → Loki 로만 나감.
     access: proxy
     url: http://loki:3100
+    editable: true
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
     editable: true

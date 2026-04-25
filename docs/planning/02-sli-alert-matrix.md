@@ -84,3 +84,43 @@
 - 각 알림은 운영자가 바로 행동할 수 있는가?
 - 돈을 지키는 지표와 돈을 버는 지표가 모두 존재하는가?
 - 운영 우선순위가 퍼널 중요도와 일치하는가?
+
+## 8. 레이어 라우팅 운영 기준(구현 반영)
+
+- `Landing`: `User Experience Status`, `Business Impact Status`, `Infra Health Status`로 1차 분기.
+- `SRE`: `Availability`, `5xx`, `p95`, `Apdex`, `Saturation`으로 사용자 영향 확정.
+- `Infra`: host/container/DB 지표로 병목 후보 압축.
+- `Developer`: endpoint/trace/log/error signature로 포렌식.
+- `Executive`: 퍼널 성공률 + baseline 대비 감소량으로 손실 판단.
+
+## 9. 구현된 Recording Rule / Alert 확장
+
+### 9-1. 신규 Recording Rule
+
+| 분류 | Rule | 용도 |
+|---|---|---|
+| Landing 상태 | `mwa:user_experience_status:5m` | 사용자 체감 이상 요약 |
+| Landing 상태 | `mwa:business_impact_status:5m` | 주문/결제 영향 요약 |
+| Landing 상태 | `mwa:infra_health_status:5m` | 인프라 건강 요약 |
+| SRE | `mwa:apdex_score:5m` | 체감 만족도 지표 |
+| SRE/Infra | `mwa:saturation_warning_score:5m` | 포화 warning 집계 |
+| Infra | `mwa:db_connections_used_ratio:5m` | DB connection 사용률 |
+| Executive | `mwa:conversion_delta_vs_baseline:5m` | 평시 대비 전환률 델타 |
+| Developer | `mwa:payment_processing_latency_p95_seconds:5m` | 결제 처리 지연 p95 |
+| Placeholder | `mwa:worker_queue_lag:5m` | TODO(큐 계측 대기) |
+| Placeholder | `mwa:thread_pool_saturation:5m` | TODO(pool 계측 대기) |
+| Placeholder | `mwa:estimated_revenue_loss_per_hour:5m` | TODO(매출 손실 계측 대기) |
+
+### 9-2. 신규 Alert
+
+| Alert | 조건 | 목적 |
+|---|---|---|
+| `LowApdexScore` | `mwa:apdex_score:5m < 0.85` for `10m` | 체감 품질 하락 조기 감지 |
+| `SaturationWarningSummary` | `mwa:saturation_warning_score:5m > 0` for `10m` | 자원 포화 경고 집계 |
+| `BusinessImpactDegraded` | `mwa:business_impact_status:5m < 1` for `10m` | 비즈니스 영향 감지 |
+
+## 10. 미계측 항목 처리 정책
+
+- 대시보드에는 패널을 유지한다.
+- 규칙은 `vector(0)` placeholder로 정의해 쿼리 오류를 방지한다.
+- 운영 문서에는 `TODO(미계측)`로 명시한다.

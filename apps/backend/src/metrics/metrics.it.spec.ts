@@ -116,8 +116,11 @@ describe('metrics integration behavior', () => {
 		expect(response.text).toContain('mwa_cart_add_total');
 		expect(response.text).toContain('mwa_order_create_total');
 		expect(response.text).toContain('mwa_payment_attempt_total');
+		expect(response.text).toContain('mwa_log_heartbeat_unixtime_seconds');
+		expect(response.text).toContain('mwa_payment_processing_latency_seconds');
 		expect(response.text).toMatch(/mwa_http_requests_total\{[^\n]*service="backend"[^\n]*handler="\/health"[^\n]*method="GET"[^\n]*status_code="200"/);
 		expect(response.text).toMatch(/mwa_http_requests_total\{[^\n]*handler="\/api\/orders\/:orderId\/payment-attempts"[^\n]*method="POST"/);
+		expect(response.text).toMatch(/mwa_log_heartbeat_unixtime_seconds\{[^\n]*service="backend"[^\n]*\}\s+[0-9.]+/);
 		expect(response.text).not.toContain(`/api/orders/${ORDER_SUCCESS}/payment-attempts`);
 
 		assertNoForbiddenMetricLabels(response.text, 'mwa_http_requests_total');
@@ -126,6 +129,8 @@ describe('metrics integration behavior', () => {
 		assertNoForbiddenMetricLabels(response.text, 'mwa_cart_add_total');
 		assertNoForbiddenMetricLabels(response.text, 'mwa_order_create_total');
 		assertNoForbiddenMetricLabels(response.text, 'mwa_payment_attempt_total');
+		assertNoForbiddenMetricLabels(response.text, 'mwa_log_heartbeat_unixtime_seconds');
+		assertNoForbiddenMetricLabels(response.text, 'mwa_payment_processing_latency_seconds_bucket');
 	});
 
 	it('increments search request counters by result', async () => {
