@@ -689,4 +689,4 @@ erDiagram
 
 - 이 ERD를 기준으로 `Phase 1 실제 구현 테이블 목록`을 별도로 뽑는다.
 - Prisma 또는 SQL 스키마 초안 작성 시, `구현 테이블`과 `보존 테이블`을 구분한다.
-- `monitoring_events`와 `api_request_logs`를 `docs/planning/02-sli-alert-matrix.md` 및 `docs/planning/05-metrics-dashboard.md`와 직접 매핑한다.
+- `monitoring_events`와 `api_request_logs`를 `docs/operations/alerts.md` 및 `docs/operations/dashboards.md`와 직접 매핑한다.

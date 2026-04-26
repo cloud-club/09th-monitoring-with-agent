@@ -71,4 +71,4 @@ erDiagram
   - `order.created`
   - `payment.started`
   - `payment.failed`
-- 이 도메인은 `docs/planning/02-sli-alert-matrix.md`와 `docs/planning/05-metrics-dashboard.md`의 지표 정의와 직접 매핑된다.
+- 이 도메인은 `docs/operations/alerts.md`와 `docs/operations/dashboards.md`의 지표 정의와 직접 매핑된다.
