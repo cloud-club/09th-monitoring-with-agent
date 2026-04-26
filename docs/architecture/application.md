@@ -1,12 +1,51 @@
-# Backend bootstrap (NestJS) + MikroORM boundary
+# Application Architecture
 
-`apps/backend`는 Phase 1 백엔드의 기본 실행 단위다.
+`apps/backend`는 NestJS 기반 application runtime입니다. HTTP 계약은 유지하면서 내부 구조는 feature module, shared read model, repository, observability support로 나눕니다.
+
+## Module Shape
+
+```text
+controller
+  HTTP boundary, request parsing, response envelope, request-scoped logging
+
+service
+  use case flow, domain rule, transaction orchestration
+
+repository/read model
+  raw SQL, DB row loading, persistence
+
+mapper
+  DB row -> API/domain view conversion
+```
+
+Current feature modules:
+
+- `catalog`, `search`, `recommendation`: product read model consumers
+- `cart`, `order`, `payment`: write use cases with repository boundaries
+- `observability`, `request-context`, `qa`, `health`, `contract`: support modules
+
+## Shared Read Model
+
+`catalog`, `search`, and `recommendation` share the product snapshot read model under `apps/backend/src/product-read-model`.
+
+- The read model owns latest snapshot SQL and product row mapping.
+- Feature services choose query semantics and return public API views.
+- Product identifiers remain `sales.id`; snapshot identifiers remain `sale_snapshots.id`.
+
+## Write Use Cases
+
+`cart`, `order`, and `payment` follow a repository-backed service pattern.
+
+- `CustomerLockService` owns customer advisory lock transaction orchestration.
+- Domain services validate state transitions and conflict cases.
+- Repositories own SQL details and persistence/reload operations.
+- Demo-only seeded address ownership lives in `DemoAddressPolicy`, not directly in `OrderService`.
 
 ## Runtime contract
 
 - Port: `8080` (fixed)
 - Health endpoint: `GET /health`
-- Shared HTTP contract + validation + error envelope: `docs/backend/http-contract.md`
+- Shared HTTP contract + validation + error envelope: `docs/contracts/http-api.md`
 - Metrics endpoint: `GET /metrics`
 - Catalog endpoints:
   - `GET /api/catalog/products?page=1&limit=20&sort=newest|price_asc|price_desc`
@@ -55,7 +94,7 @@ npm run db:assert:fixtures
 - Auto-fix: `npm run lint:fix`
 - Auto-format: `npm run format` (`.ts`는 ESLint fix, `json/mjs`는 Prettier)
 
-## Database contract (Phase 1)
+## Database Contract
 
 - Provider: PostgreSQL
 - ORM config: `apps/backend/mikro-orm.config.ts`
@@ -82,12 +121,10 @@ DATABASE_URL="postgresql://mwa:mwa@localhost:5432/mwa?schema=public"
 - Reusable factories: `apps/backend/prisma/factories.js`
 - Fixture assertion script: `apps/backend/test/fixtures/assert-deterministic-seed.js`
 
-### Scope boundary
+### Scope Boundary
 
-현재 브랜치의 MikroORM 적용 범위는 **ORM 전환 기반(bootstrap)** 까지다.
+Runtime DB access uses MikroORM `EntityManager` and raw SQL for the current demo backend. Prisma assets remain for schema/seed compatibility until a future persistence migration removes that boundary.
 
-- NestJS와 MikroORM 모듈 초기화
-- PostgreSQL 연결 설정 및 migration CLI 경로 고정
-- 기본 엔티티(`RuntimeMarkerEntity`) 기반 ORM 부트스트랩
-
-기존 `apps/backend/prisma/*` 산출물은 도메인 이관 작업 전까지 레거시 참조로 유지한다.
+- NestJS and MikroORM module bootstrap stay in `DatabaseModule`.
+- `apps/backend/prisma/*` remains the deterministic fixture and seed surface.
+- New runtime SQL should live in repository/read-model classes, not controllers.
