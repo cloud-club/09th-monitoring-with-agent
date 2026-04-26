@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 
-import { CatalogModule } from '../catalog/catalog.module';
+import { ProductReadModelModule } from '../product-read-model/product-read-model.module';
 
 import { RecommendationController } from './recommendation.controller';
 import { RecommendationService } from './recommendation.service';
 
 @Module({
-	imports: [CatalogModule],
+	imports: [ProductReadModelModule],
 	controllers: [RecommendationController],
 	providers: [RecommendationService],
 })
