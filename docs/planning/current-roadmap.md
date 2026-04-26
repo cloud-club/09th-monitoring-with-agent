@@ -12,9 +12,9 @@
 
 ### 산출물
 
-- `docs/planning/01-demo-blueprint.md`
-- `docs/planning/02-sli-alert-matrix.md`
-- `docs/planning/08-scenario-testing-web.md`
+- `docs/planning/archive/01-demo-blueprint.md`
+- `docs/operations/alerts.md`
+- `docs/planning/archive/08-scenario-testing-web.md`
 - 핵심 흐름과 제외 범위 합의
 - 알림 경로와 에이전트 제약 합의
 
@@ -127,7 +127,7 @@
 ### 산출물
 
 - 시나리오 스크립트 또는 플래그
-- `docs/planning/08-scenario-testing-web.md` 기준의 시나리오 카탈로그와 검증 흐름
+- `docs/contracts/scenario-runner.md`와 `docs/planning/archive/08-scenario-testing-web.md` 기준의 시나리오 카탈로그와 검증 흐름
 - 대시보드 캡처 또는 녹화
 - 알림/로그/요약 카드 검증 기록
 
