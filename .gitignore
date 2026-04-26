@@ -10,6 +10,9 @@ data/loki/
 # monitoring/ 기준 compose 시 ./data 가 monitoring/data 로 생성됨
 monitoring/data/
 
+# scenario runner execution results
+monitoring/scenario-runner/results/
+
 # local planning / agent artifacts
 .sisyphus/
 .playwright-mcp/
