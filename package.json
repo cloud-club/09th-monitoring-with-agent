@@ -1,0 +1,14 @@
+{
+  "name": "mwa-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "monitoring:scenario:list": "node monitoring/scenario-runner/cli/run-scenario.mjs list",
+    "monitoring:scenario:k6": "node monitoring/scenario-runner/cli/run-scenario.mjs k6",
+    "monitoring:scenario:k6:smoke": "SCENARIO_PACK=smoke VUS=1 DURATION=30s RESET_SEED=true SLEEP_SECONDS=0.2 node monitoring/scenario-runner/cli/run-scenario.mjs k6",
+    "monitoring:scenario:k6:all": "SCENARIO_PACK=all node monitoring/scenario-runner/cli/run-scenario.mjs k6",
+    "monitoring:scenario:chaos": "node monitoring/scenario-runner/cli/run-scenario.mjs chaos",
+    "monitoring:scenario:recover": "node monitoring/scenario-runner/cli/run-scenario.mjs recover",
+    "test:scenario-runner": "node --test monitoring/scenario-runner/test/*.test.mjs"
+  }
+}
