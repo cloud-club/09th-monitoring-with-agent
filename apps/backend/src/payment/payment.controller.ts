@@ -8,6 +8,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, Req, 
 import { ok } from '../http/contracts';
 import { ERROR_CODES } from '../http/error-codes';
 import { HttpError } from '../http/http-error';
+import { IssueService } from '../issue/issue.service';
 import { AppLoggerService } from '../logging/app-logger.service';
 import { incrementPaymentAttempt, observePaymentProcessingLatency } from '../metrics/metrics-registry';
 import { BuyerAccessGuard } from '../request-context/buyer-access.guard';
@@ -36,6 +37,7 @@ function getBuyerCustomerId(request: Request): string {
 export class PaymentController {
 	public constructor(
 		@Inject(AppLoggerService) private readonly appLogger: AppLoggerService,
+		@Inject(IssueService) private readonly issueService: IssueService,
 		@Inject(PaymentService) private readonly paymentService: PaymentService,
 	) {}
 
@@ -71,6 +73,22 @@ export class PaymentController {
 		}
 
 		const customerId = getBuyerCustomerId(request);
+		const paymentPgFormatIssue = this.issueService.getPaymentPgFormatIssue();
+		if (paymentPgFormatIssue.enabled) {
+			incrementPaymentAttempt('failed');
+			this.appLogger.logDomainEvent({
+				request,
+				eventName: 'payment.failed',
+				result: 'failed',
+				errorCode: ERROR_CODES.INTERNAL_SERVER_ERROR,
+				fields: {
+					order_id: orderId,
+					issue: 'payment-pg-format',
+				},
+			});
+			throw new HttpError(500, ERROR_CODES.INTERNAL_SERVER_ERROR, 'PG response format mismatch');
+		}
+
 		this.appLogger.logDomainEvent({
 			request,
 			eventName: 'payment.started',

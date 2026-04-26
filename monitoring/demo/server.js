@@ -712,6 +712,59 @@ const SCENARIO_TEMPLATES = [
     ],
   },
   {
+    id: "issue-payment-pg-format-500",
+    name: "Issue: Payment PG format mismatch (500)",
+    description: "결제 PG 포맷 이슈를 켜고 결제 API 500 재현 후 이슈를 끕니다.",
+    mode: "sequential",
+    steps: [
+      {
+        id: "issue-on",
+        label: "POST /api/issues/payment-pg-format enabled=true",
+        method: "POST",
+        path: "/api/issues/payment-pg-format",
+        body: {
+          enabled: true,
+        },
+        assertions: [
+          { type: "status", equals: 200 },
+          { type: "json_path", path: "data.enabled", equals: true },
+        ],
+      },
+      {
+        id: "payment-500",
+        label: "POST /api/orders/:orderId/payment-attempts",
+        method: "POST",
+        path: "/api/orders/55555555-5555-4555-8555-555555555552/payment-attempts",
+        headers: {
+          "x-customer-id": "11111111-1111-4111-8111-111111111112",
+          "x-request-id": "ui-issue-pg-format-{{runtime.runId}}",
+        },
+        body: {
+          requestKey: "ui-issue-pg-{{runtime.runId}}",
+          outcome: "success",
+        },
+        assertions: [
+          { type: "status", equals: 500 },
+          { type: "json_path", path: "error.code", equals: "INTERNAL_SERVER_ERROR" },
+          { type: "json_path", path: "error.message", equals: "PG response format mismatch" },
+        ],
+      },
+      {
+        id: "issue-off",
+        label: "POST /api/issues/payment-pg-format enabled=false",
+        method: "POST",
+        path: "/api/issues/payment-pg-format",
+        body: {
+          enabled: false,
+        },
+        assertions: [
+          { type: "status", equals: 200 },
+          { type: "json_path", path: "data.enabled", equals: false },
+        ],
+      },
+    ],
+  },
+  {
     id: "route-not-found",
     name: "Route not found",
     description: "실제 404 HTML 응답을 실패 시나리오로 확인합니다.",
@@ -746,6 +799,7 @@ const ALLOWED_SCENARIO_PATH_PATTERNS = [
   /^\/api\/orders$/,
   /^\/api\/orders\/[^/?#]+$/,
   /^\/api\/orders\/[^/?#]+\/payment-attempts$/,
+  /^\/api\/issues\/payment-pg-format$/,
 ];
 
 function appendLog(filePath, line) {
@@ -1822,6 +1876,17 @@ function renderScenarioPage() {
             <div class="assertion-item">사용자 흐름은 <span class="mono">x-customer-id</span>, body, 이전 step 결과 참조를 사용할 수 있습니다.</div>
           </div>
         </section>
+        <section class="panel">
+          <h3>Issue Controls</h3>
+          <p>시나리오 A용 결제 PG 포맷 장애를 토글합니다.</p>
+          <div class="button-row" style="margin-top:10px">
+            <button id="issue-enable-button" class="button-secondary" type="button">결제 PG 이슈 ON</button>
+            <button id="issue-disable-button" class="button-ghost" type="button">결제 PG 이슈 OFF</button>
+          </div>
+          <div class="status-line" style="margin-top:10px">
+            <span id="issue-status-pill" class="status-pill status-valid">Issue 상태 확인 중...</span>
+          </div>
+        </section>
       </aside>
 
       <section class="workspace">
@@ -1888,6 +1953,7 @@ function renderScenarioPage() {
     const templates = ${templatesJson};
     const defaultTemplateId = ${escapeForInlineScript(defaultTemplateId)};
     const monitoringLinks = ${monitoringLinksJson};
+    const issueControlPath = '/qa/issues/payment-pg-format';
 
     const templateList = document.getElementById('template-list');
     const templateCount = document.getElementById('template-count');
@@ -1903,6 +1969,9 @@ function renderScenarioPage() {
     const runButton = document.getElementById('run-button');
     const validateButton = document.getElementById('validate-button');
     const resetButton = document.getElementById('reset-button');
+    const issueEnableButton = document.getElementById('issue-enable-button');
+    const issueDisableButton = document.getElementById('issue-disable-button');
+    const issueStatusPill = document.getElementById('issue-status-pill');
 
     let activeTemplateId = defaultTemplateId;
 
@@ -1966,6 +2035,43 @@ function renderScenarioPage() {
       validationPill.textContent = state === 'valid' ? 'Valid scenario' : state === 'running' ? 'Running...' : 'Validation failed';
       validationErrors.hidden = errors.length === 0;
       validationErrors.innerHTML = errors.map((error) => '<li>' + escapeText(error) + '</li>').join('');
+    }
+
+    function setIssueStatusPill(enabled, updatedAt = null) {
+      issueStatusPill.className = 'status-pill ' + (enabled ? 'status-invalid' : 'status-valid');
+      const updatedText = updatedAt ? ' · ' + new Date(updatedAt).toLocaleTimeString('ko-KR') : '';
+      issueStatusPill.textContent = enabled ? 'PG 이슈 ON' + updatedText : 'PG 이슈 OFF' + updatedText;
+    }
+
+    async function refreshIssueStatus() {
+      try {
+        const response = await fetch(issueControlPath);
+        const payload = await response.json();
+        setIssueStatusPill(payload.data?.enabled === true, payload.data?.updatedAt ?? null);
+      } catch (_error) {
+        issueStatusPill.className = 'status-pill status-invalid';
+        issueStatusPill.textContent = 'Issue 상태 조회 실패';
+      }
+    }
+
+    async function toggleIssue(enabled) {
+      issueEnableButton.disabled = true;
+      issueDisableButton.disabled = true;
+      try {
+        const response = await fetch(issueControlPath, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        });
+        const payload = await response.json();
+        setIssueStatusPill(payload.data?.enabled === true, payload.data?.updatedAt ?? null);
+      } catch (_error) {
+        issueStatusPill.className = 'status-pill status-invalid';
+        issueStatusPill.textContent = 'Issue 토글 실패';
+      } finally {
+        issueEnableButton.disabled = false;
+        issueDisableButton.disabled = false;
+      }
     }
 
     function renderTemplates() {
@@ -2113,7 +2219,16 @@ function renderScenarioPage() {
       runButton.disabled = false;
     });
 
+    issueEnableButton.addEventListener('click', async () => {
+      await toggleIssue(true);
+    });
+
+    issueDisableButton.addEventListener('click', async () => {
+      await toggleIssue(false);
+    });
+
     loadTemplate(defaultTemplateId);
+    void refreshIssueStatus();
   </script>
 </body>
 </html>`;
@@ -2357,6 +2472,34 @@ app.get("/", (_req, res) => {
 
 app.get("/qa/scenarios", (_req, res) => {
   res.type("html").send(renderScenarioPage());
+});
+
+app.get("/qa/issues/payment-pg-format", async (_req, res) => {
+  const upstreamUrl = new URL("/api/issues/payment-pg-format", `${SCENARIO_BACKEND_BASE_URL}/`).toString();
+  const response = await fetch(upstreamUrl, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  const payload = await response.json();
+  res.status(response.status).json(payload);
+});
+
+app.post("/qa/issues/payment-pg-format", async (req, res) => {
+  const upstreamUrl = new URL("/api/issues/payment-pg-format", `${SCENARIO_BACKEND_BASE_URL}/`).toString();
+  const response = await fetch(upstreamUrl, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      enabled: req.body?.enabled === true,
+    }),
+  });
+  const payload = await response.json();
+  res.status(response.status).json(payload);
 });
 
 app.post("/qa/scenarios/run", async (req, res) => {

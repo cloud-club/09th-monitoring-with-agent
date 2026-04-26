@@ -6,6 +6,7 @@ import { ContractController } from './contract/contract.controller';
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
 import { PaginationQueryPipe } from './http/pipes/pagination-query.pipe';
+import { IssueModule } from './issue/issue.module';
 import { LoggingModule } from './logging/logging.module';
 import { RequestLoggingMiddleware } from './logging/request-logging.middleware';
 import { HttpMetricsMiddleware } from './metrics/http-metrics.middleware';
@@ -20,7 +21,7 @@ import { SearchModule } from './search/search.module';
 import { HttpTraceMiddleware } from './telemetry/http-trace.middleware';
 
 @Module({
-	imports: [LoggingModule, DatabaseModule, CatalogModule, SearchModule, RecommendationModule, CartModule, OrderModule, PaymentModule],
+	imports: [LoggingModule, DatabaseModule, CatalogModule, SearchModule, RecommendationModule, CartModule, OrderModule, PaymentModule, IssueModule],
 	controllers: [HealthController, ContractController, MetricsController, RequestContextController],
 	providers: [PaginationQueryPipe, BuyerAccessGuard],
 })
