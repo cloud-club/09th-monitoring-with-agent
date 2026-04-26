@@ -84,6 +84,7 @@ export class PaymentController {
 				fields: {
 					order_id: orderId,
 					issue: 'payment-pg-format',
+					error_message: 'PG response format mismatch',
 				},
 			});
 			throw new HttpError(500, ERROR_CODES.INTERNAL_SERVER_ERROR, 'PG response format mismatch');
