@@ -1,7 +1,8 @@
 name: mwa
 
-# 실행(모니터링 폴더에서): export USER_ID=$(id -u) && docker compose up -d --build
-# 실행(루트에서): export USER_ID=$(id -u) && docker compose -f monitoring/docker-compose.yml up -d --build
+# 실행(모니터링 폴더에서): docker compose up -d --build
+# 실행(루트에서): docker compose -f monitoring/docker-compose.yml up -d --build
+# Grafana는 기본 UID 472로 실행합니다. 권한을 바꿔야 하면 GRAFANA_UID=<uid>를 지정하세요.
 # 포트: 8080 backend · 8081 demo/qa scenarios · 3000 Grafana · 9090 Prometheus · 3100 Loki · 3200 Tempo · 9100 node_exporter · 8088 cAdvisor(컨테이너 메트릭)
 # 앱 로그(stdout vs 파일) 합치는 법 → README「애플리케이션 로그 연동」
 
@@ -16,6 +17,8 @@ services:
       - DATABASE_URL=postgresql://mwa:mwa@postgres:5432/mwa?schema=public
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://tempo:4318/v1/traces
       - OTEL_SERVICE_NAME=mwa-backend
+      - QA_SCENARIO_RESET_ENABLED=true
+      - QA_FAULT_INJECTION_ENABLED=true
     ports:
       - "8080:8080"
     volumes:
@@ -37,11 +40,15 @@ services:
 
   mwa-demo:
     build:
-      context: ./demo
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: monitoring/demo/Dockerfile
     container_name: mwa-demo
     environment:
       - SCENARIO_BACKEND_BASE_URL=http://mwa-backend:8080
+      - SCENARIO_RESET_SEED_ENABLED=true
+      - MONITORING_PROMETHEUS_BASE_URL=http://prometheus:9090
+      - MONITORING_LOKI_BASE_URL=http://loki:3100
+      - MONITORING_GRAFANA_BASE_URL=http://grafana:3000
     ports:
       - "8081:8080"
     volumes:
@@ -92,7 +99,7 @@ services:
   grafana:
     container_name: mwa-grafana
     image: grafana/grafana:latest
-    user: ${USER_ID:-472}
+    user: ${GRAFANA_UID:-472}
     environment:
       # 첫 로그인 admin / admin
       - GF_SECURITY_ADMIN_USER=admin

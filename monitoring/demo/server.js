@@ -1,12 +1,15 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { execFile, spawn } = require("child_process");
+const { pathToFileURL } = require("url");
 const express = require("express");
 const morgan = require("morgan");
 const client = require("prom-client");
 const { prisma, isPrismaEnabled } = require("./prisma-client");
 
 const PORT = process.env.PORT || 8080;
+const HOST = process.env.HOST || "0.0.0.0";
 const LOG_DIR = process.env.LOG_DIR || "/app/logs";
 const LOG_ACCESS = path.join(LOG_DIR, "mwa-access.log");
 const LOG_APP = path.join(LOG_DIR, "mwa-app.log");
@@ -14,6 +17,35 @@ const SCENARIO_BACKEND_BASE_URL = process.env.SCENARIO_BACKEND_BASE_URL || proce
 const MONITORING_PROMETHEUS_BASE_URL = process.env.MONITORING_PROMETHEUS_BASE_URL || "http://127.0.0.1:9090";
 const MONITORING_LOKI_BASE_URL = process.env.MONITORING_LOKI_BASE_URL || "http://127.0.0.1:3100";
 const MONITORING_GRAFANA_BASE_URL = process.env.MONITORING_GRAFANA_BASE_URL || "http://127.0.0.1:3000";
+const SCENARIO_RESET_SEED_ENABLED = process.env.SCENARIO_RESET_SEED_ENABLED !== "false";
+const QA_CHAOS_ENABLED = process.env.QA_CHAOS_ENABLED === "true";
+const QA_K6_RUNNER_ENABLED = process.env.QA_K6_RUNNER_ENABLED === "true";
+const K6_SCENARIO_PACK_DEFAULT = process.env.K6_SCENARIO_PACK_DEFAULT || "smoke";
+const K6_SCENARIO_CATALOG_PATHS = [
+  process.env.K6_SCENARIO_CATALOG_PATH,
+  path.join(__dirname, "monitoring/scenario-runner/scenarios/k6-scenarios.mjs"),
+  path.join(__dirname, "../scenario-runner/scenarios/k6-scenarios.mjs"),
+].filter(Boolean);
+const K6_SUMMARY_PATHS = [
+  process.env.K6_SUMMARY_PATH,
+  path.join(__dirname, "monitoring/scenario-runner/results/summary.json"),
+  path.join(__dirname, "../scenario-runner/results/summary.json"),
+].filter(Boolean);
+const K6_RUNNER_CLI_PATHS = [
+  process.env.K6_RUNNER_CLI_PATH,
+  path.join(__dirname, "monitoring/scenario-runner/cli/run-scenario.mjs"),
+  path.join(__dirname, "../scenario-runner/cli/run-scenario.mjs"),
+].filter(Boolean);
+const CHAOS_MAX_MEMORY_BYTES = Number(process.env.CHAOS_MAX_MEMORY_BYTES || 256 * 1024 * 1024);
+const CHAOS_POLL_INTERVAL_MS = Number(process.env.CHAOS_POLL_INTERVAL_MS || 15000);
+const CHAOS_RUN_RETENTION_MS = Number(process.env.CHAOS_RUN_RETENTION_MS || 60 * 60 * 1000);
+const CHAOS_DEFAULT_HOLD_MS = Number(process.env.CHAOS_DEFAULT_HOLD_MS || 6 * 60 * 1000);
+const CHAOS_LONG_HOLD_MS = Number(process.env.CHAOS_LONG_HOLD_MS || 11 * 60 * 1000);
+const CHAOS_ALLOWED_CONTAINERS = new Set(["mwa-backend", "mwa-postgres", "mwa-promtail", "mwa-tempo"]);
+const CHAOS_DISK_FILL_BYTES = Number(process.env.CHAOS_DISK_FILL_BYTES || 256 * 1024 * 1024);
+const CHAOS_AVERAGE_ORDER_VALUE_WON = Number(process.env.CHAOS_AVERAGE_ORDER_VALUE_WON || 8267);
+
+fs.mkdirSync(LOG_DIR, { recursive: true });
 
 const KPI_RESULT_LABELS = Object.freeze({
   success: "success",
@@ -37,7 +69,7 @@ const KPI_TELEMETRY_ENDPOINTS = Object.freeze([
 const KPI_ALERT_RULES = Object.freeze({
   payment: ["PaymentFailureSpike"],
   order: ["OrderCreateFailures"],
-  api: ["APIHighErrorRate", "APIHighLatencyP95"],
+  api: ["APIHighErrorRate", "APIHighLatencyP95", "SearchLatencySLOViolation"],
 });
 
 const KPI_STATE = {
@@ -714,7 +746,7 @@ const SCENARIO_TEMPLATES = [
   {
     id: "route-not-found",
     name: "Route not found",
-    description: "실제 404 HTML 응답을 실패 시나리오로 확인합니다.",
+    description: "존재하지 않는 backend route의 JSON 404 계약을 확인합니다.",
     mode: "sequential",
     steps: [
       {
@@ -724,8 +756,240 @@ const SCENARIO_TEMPLATES = [
         path: "/route-that-does-not-exist",
         assertions: [
           { type: "status", equals: 404 },
-          { type: "content_type_includes", value: "text/html" },
-          { type: "text_includes", value: "Cannot GET /route-that-does-not-exist" },
+          { type: "content_type_includes", value: "application/json" },
+          { type: "json_path", path: "error.code", equals: "NOT_FOUND" },
+          { type: "json_path", path: "error.message", equals: "Route not found" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "fault-search-delay",
+    name: "Fault search delay",
+    description: "검색 API에 QA delay fault를 주입해 endpoint latency 계측을 검증합니다.",
+    mode: "sequential",
+    steps: [
+      {
+        id: "searchDelay",
+        label: "GET /api/search with x-mwa-fault=delay",
+        method: "GET",
+        path: "/api/search?q=Notebook&page=1&limit=5",
+        headers: {
+          "x-request-id": "ui-fault-search-delay-{{runtime.runId}}",
+          "x-mwa-fault": "delay",
+          "x-mwa-fault-delay-ms": "1000",
+        },
+        timeoutMs: 5000,
+        assertions: [
+          { type: "status", equals: 200 },
+          { type: "json_path", path: "success", equals: true },
+        ],
+      },
+    ],
+  },
+  {
+    id: "fault-search-error",
+    name: "Fault search error",
+    description: "검색 API에 QA error fault를 주입해 5xx와 trace/log drilldown을 검증합니다.",
+    mode: "sequential",
+    steps: [
+      {
+        id: "searchError",
+        label: "GET /api/search with x-mwa-fault=error",
+        method: "GET",
+        path: "/api/search?q=Notebook&page=1&limit=5",
+        headers: {
+          "x-request-id": "ui-fault-search-error-{{runtime.runId}}",
+          "x-mwa-fault": "error",
+        },
+        assertions: [
+          { type: "status", equals: 500 },
+          { type: "json_path", path: "error.code", equals: "INTERNAL_SERVER_ERROR" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "fault-cart-delay",
+    name: "Fault cart add delay",
+    description: "장바구니 추가 API에 QA delay fault를 주입합니다.",
+    mode: "sequential",
+    steps: [
+      {
+        id: "cartAddDelay",
+        label: "POST /api/cart/items with x-mwa-fault=delay",
+        method: "POST",
+        path: "/api/cart/items",
+        headers: {
+          "x-customer-id": "11111111-1111-4111-8111-111111111112",
+          "x-request-id": "ui-fault-cart-delay-{{runtime.runId}}",
+          "x-mwa-fault": "delay",
+          "x-mwa-fault-delay-ms": "1000",
+        },
+        timeoutMs: 5000,
+        body: {
+          variantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+          quantity: 1,
+        },
+        assertions: [
+          { type: "status", equals: 201 },
+          { type: "json_path", path: "success", equals: true },
+        ],
+      },
+    ],
+  },
+  {
+    id: "fault-order-delay",
+    name: "Fault order delay",
+    description: "주문 생성 API에 QA delay fault를 주입합니다.",
+    mode: "sequential",
+    steps: [
+      {
+        id: "cartAddForOrderDelay",
+        label: "POST /api/cart/items",
+        method: "POST",
+        path: "/api/cart/items",
+        headers: {
+          "x-customer-id": "11111111-1111-4111-8111-111111111112",
+          "x-request-id": "ui-fault-order-cart-{{runtime.runId}}",
+        },
+        body: {
+          variantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+          quantity: 1,
+        },
+        assertions: [
+          { type: "status", equals: 201 },
+        ],
+      },
+      {
+        id: "orderDelay",
+        label: "POST /api/orders with x-mwa-fault=delay",
+        method: "POST",
+        path: "/api/orders",
+        headers: {
+          "x-customer-id": "11111111-1111-4111-8111-111111111112",
+          "x-request-id": "ui-fault-order-delay-{{runtime.runId}}",
+          "x-mwa-fault": "delay",
+          "x-mwa-fault-delay-ms": "1000",
+        },
+        timeoutMs: 5000,
+        body: {
+          cartId: "{{steps.cartAddForOrderDelay.body.data.cart.cart_id}}",
+          addressId: "22222222-2222-4222-8222-222222222222",
+        },
+        assertions: [
+          { type: "status", equals: 201 },
+          { type: "json_path", path: "data.order.status", equals: "pending_payment" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "fault-payment-delay",
+    name: "Fault payment delay",
+    description: "결제 API에 QA delay fault를 주입합니다.",
+    mode: "sequential",
+    steps: [
+      {
+        id: "cartAddForPaymentDelay",
+        label: "POST /api/cart/items",
+        method: "POST",
+        path: "/api/cart/items",
+        headers: {
+          "x-customer-id": "11111111-1111-4111-8111-111111111112",
+          "x-request-id": "ui-fault-payment-cart-{{runtime.runId}}",
+        },
+        body: {
+          variantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+          quantity: 1,
+        },
+        assertions: [
+          { type: "status", equals: 201 },
+        ],
+      },
+      {
+        id: "orderForPaymentDelay",
+        label: "POST /api/orders",
+        method: "POST",
+        path: "/api/orders",
+        headers: {
+          "x-customer-id": "11111111-1111-4111-8111-111111111112",
+          "x-request-id": "ui-fault-payment-order-{{runtime.runId}}",
+        },
+        body: {
+          cartId: "{{steps.cartAddForPaymentDelay.body.data.cart.cart_id}}",
+          addressId: "22222222-2222-4222-8222-222222222222",
+        },
+        assertions: [
+          { type: "status", equals: 201 },
+        ],
+      },
+      {
+        id: "paymentDelay",
+        label: "POST /api/orders/:orderId/payment-attempts with x-mwa-fault=delay",
+        method: "POST",
+        path: "/api/orders/{{steps.orderForPaymentDelay.body.data.order.order_id}}/payment-attempts",
+        headers: {
+          "x-customer-id": "11111111-1111-4111-8111-111111111112",
+          "x-request-id": "ui-fault-payment-delay-{{runtime.runId}}",
+          "x-mwa-fault": "delay",
+          "x-mwa-fault-delay-ms": "1000",
+        },
+        timeoutMs: 5000,
+        body: {
+          requestKey: "ui-fault-payment-delay-{{runtime.runId}}",
+          outcome: "success",
+        },
+        assertions: [
+          { type: "status", equals: 201 },
+          { type: "json_path", path: "data.attempt.status", equals: "succeeded" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "fault-unhandled-exception",
+    name: "Fault unhandled exception",
+    description: "QA unhandled fault로 stack trace와 5xx 로그를 검증합니다.",
+    mode: "sequential",
+    steps: [
+      {
+        id: "unhandledSearch",
+        label: "GET /api/search with x-mwa-fault=unhandled",
+        method: "GET",
+        path: "/api/search?q=Notebook&page=1&limit=5",
+        headers: {
+          "x-request-id": "ui-fault-unhandled-{{runtime.runId}}",
+          "x-mwa-fault": "unhandled",
+        },
+        assertions: [
+          { type: "status", equals: 500 },
+          { type: "json_path", path: "error.code", equals: "INTERNAL_SERVER_ERROR" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "label-coverage-missing-buyer",
+    name: "Label coverage missing buyer",
+    description: "필수 buyer header 누락 요청으로 user_role/customer_id 커버리지 하락을 검증합니다.",
+    mode: "sequential",
+    steps: [
+      {
+        id: "missingCustomer",
+        label: "POST /api/cart/items without x-customer-id",
+        method: "POST",
+        path: "/api/cart/items",
+        headers: {
+          "x-request-id": "ui-label-missing-customer-{{runtime.runId}}",
+        },
+        body: {
+          variantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+          quantity: 1,
+        },
+        assertions: [
+          { type: "status", equals: 401 },
+          { type: "json_path", path: "error.code", equals: "UNAUTHORIZED_CUSTOMER" },
         ],
       },
     ],
@@ -736,6 +1000,7 @@ const ALLOWED_SCENARIO_PATH_PATTERNS = [
   /^\/health$/,
   /^\/metrics$/,
   /^\/route-that-does-not-exist$/,
+  /^\/contract\/error$/,
   /^\/api\/search(?:\?.*)?$/,
   /^\/api\/cart$/,
   /^\/api\/cart\/items$/,
@@ -746,6 +1011,208 @@ const ALLOWED_SCENARIO_PATH_PATTERNS = [
   /^\/api\/orders$/,
   /^\/api\/orders\/[^/?#]+$/,
   /^\/api\/orders\/[^/?#]+\/payment-attempts$/,
+];
+
+const CHAOS_SCENARIOS = [
+  {
+    id: "runner-smoke-5xx",
+    name: "Runner smoke 5xx",
+    description: "Fast executable smoke test for the chaos runner using one expected 500 request.",
+    expectedAlert: null,
+    estimatedDurationMs: 10_000,
+    steps: [
+      { type: "http", path: "/contract/error", method: "GET", expectStatus: 500, timeoutMs: 10_000 },
+    ],
+  },
+  {
+    id: "api-5xx-error-rate",
+    name: "API 5xx error rate",
+    description: "Calls /contract/error long enough for APIHighErrorRate to fire.",
+    expectedAlert: "APIHighErrorRate",
+    estimatedDurationMs: CHAOS_DEFAULT_HOLD_MS + 90_000,
+    steps: [
+      { type: "load", path: "/contract/error", method: "GET", durationMs: CHAOS_DEFAULT_HOLD_MS, concurrency: 4, intervalMs: 250, expectStatus: 500 },
+      { type: "waitForAlert", alertName: "APIHighErrorRate", timeoutMs: 2 * 60 * 1000 },
+      { type: "tempoTrace", statusCode: 500 },
+    ],
+  },
+  {
+    id: "api-high-latency-p95",
+    name: "API high latency p95",
+    description: "Combines DB sleeps and HTTP load until APIHighLatencyP95 fires.",
+    expectedAlert: "APIHighLatencyP95",
+    estimatedDurationMs: CHAOS_DEFAULT_HOLD_MS + 2 * 60 * 1000,
+    steps: [
+      { type: "db", action: "sleep-load", durationMs: CHAOS_DEFAULT_HOLD_MS, connections: 8, sleepSeconds: 3 },
+      { type: "load", path: "/api/catalog/products?page=1&limit=2&sort=newest", method: "GET", durationMs: CHAOS_DEFAULT_HOLD_MS, concurrency: 8, intervalMs: 100, expectStatus: 200 },
+      { type: "waitForPrometheus", query: "mwa:http_latency_p95_seconds:5m", threshold: 1, timeoutMs: 2 * 60 * 1000 },
+      { type: "waitForAlert", alertName: "APIHighLatencyP95", timeoutMs: 2 * 60 * 1000 },
+      { type: "tempoTrace", statusCode: 200 },
+    ],
+  },
+  {
+    id: "service-down",
+    name: "Service down",
+    description: "Stops mwa-backend, waits for ServiceDown, then restarts and verifies /health.",
+    expectedAlert: "ServiceDown",
+    estimatedDurationMs: 3 * 60 * 1000,
+    steps: [
+      { type: "docker", action: "stop", container: "mwa-backend" },
+      { type: "waitForPrometheus", query: 'up{job="mwa-backend"} == bool 0', threshold: 1, timeoutMs: 90_000 },
+      { type: "waitForAlert", alertName: "ServiceDown", timeoutMs: 2 * 60 * 1000 },
+      { type: "docker", action: "start", container: "mwa-backend" },
+      { type: "waitForPrometheus", query: 'up{job="mwa-backend"}', threshold: 1, timeoutMs: 2 * 60 * 1000 },
+      { type: "http", path: "/health", method: "GET", expectStatus: 200, timeoutMs: 30_000 },
+    ],
+  },
+  {
+    id: "host-high-cpu",
+    name: "Host high CPU",
+    description: "Runs CPU pressure workers until HighCPUUsage fires.",
+    expectedAlert: "HighCPUUsage",
+    estimatedDurationMs: CHAOS_DEFAULT_HOLD_MS + 2 * 60 * 1000,
+    steps: [
+      { type: "stress", mode: "cpu", workers: Number(process.env.CHAOS_CPU_WORKERS || 4), durationMs: CHAOS_DEFAULT_HOLD_MS },
+      { type: "waitForPrometheus", query: '100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)', threshold: 80, timeoutMs: 2 * 60 * 1000 },
+      { type: "waitForAlert", alertName: "HighCPUUsage", timeoutMs: 2 * 60 * 1000 },
+    ],
+  },
+  {
+    id: "host-high-memory",
+    name: "Host high memory",
+    description: "Allocates bounded memory pressure until HighMemoryUsage fires, or blocks at the configured safety cap.",
+    expectedAlert: "HighMemoryUsage",
+    estimatedDurationMs: CHAOS_DEFAULT_HOLD_MS + 2 * 60 * 1000,
+    steps: [
+      { type: "stress", mode: "memory", bytes: CHAOS_MAX_MEMORY_BYTES, durationMs: CHAOS_DEFAULT_HOLD_MS },
+      { type: "waitForPrometheus", query: "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100", threshold: 85, timeoutMs: 2 * 60 * 1000, blockOnTimeout: true },
+      { type: "waitForAlert", alertName: "HighMemoryUsage", timeoutMs: 2 * 60 * 1000, blockOnTimeout: true },
+    ],
+  },
+  {
+    id: "db-connection-saturation",
+    name: "DB connection saturation",
+    description: "Holds DB sessions until saturation alerting rules can fire.",
+    expectedAlert: "SaturationWarningSummary",
+    estimatedDurationMs: CHAOS_LONG_HOLD_MS + 2 * 60 * 1000,
+    steps: [
+      { type: "db", action: "sleep-load", durationMs: CHAOS_LONG_HOLD_MS, connections: Number(process.env.CHAOS_DB_CONNECTIONS || 85), sleepSeconds: 30 },
+      { type: "waitForPrometheus", query: "mwa:db_connections_used_ratio:5m", threshold: 0.8, timeoutMs: 2 * 60 * 1000 },
+      { type: "waitForAlert", alertName: "SaturationWarningSummary", timeoutMs: 2 * 60 * 1000 },
+    ],
+  },
+  {
+    id: "db-deadlock",
+    name: "DB deadlock probe",
+    description: "Creates a controlled PostgreSQL deadlock and verifies the exporter counter increases.",
+    expectedAlert: null,
+    estimatedDurationMs: 90_000,
+    steps: [
+      { type: "db", action: "deadlock" },
+      { type: "waitForPrometheus", query: 'sum(increase(pg_stat_database_deadlocks{datname="mwa"}[5m]))', threshold: 1, timeoutMs: 90_000 },
+    ],
+  },
+  {
+    id: "trace-content-validation",
+    name: "Trace content validation",
+    description: "Generates a failed request and verifies the trace exists in Tempo.",
+    expectedAlert: null,
+    estimatedDurationMs: 60_000,
+    steps: [
+      { type: "http", path: "/contract/error", method: "GET", expectStatus: 500, captureTrace: true },
+      { type: "tempoTrace", statusCode: 500 },
+    ],
+  },
+  {
+    id: "trace-to-log-drilldown",
+    name: "Trace to log drilldown",
+    description: "Generates one traced request and verifies the same trace_id is searchable in Loki.",
+    expectedAlert: null,
+    estimatedDurationMs: 90_000,
+    steps: [
+      { type: "http", path: "/api/search?q=Notebook&page=1&limit=5", method: "GET", expectStatus: 200, requestId: "chaos-trace-log", captureTrace: true },
+      { type: "tempoTrace", statusCode: 200 },
+      { type: "lokiTraceLogs" },
+    ],
+  },
+  {
+    id: "metrics-collection-stop",
+    name: "Metrics collection stop",
+    description: "Temporarily disables /metrics through QA fault injection and verifies Prometheus marks backend DOWN.",
+    expectedAlert: "ServiceDown",
+    estimatedDurationMs: 3 * 60 * 1000,
+    steps: [
+      { type: "http", path: "/metrics", method: "GET", expectStatus: 503, headers: { "x-mwa-fault": "metrics-off", "x-mwa-fault-delay-ms": "120000" }, timeoutMs: 30_000 },
+      { type: "waitForPrometheus", query: 'up{job="mwa-backend"} == bool 0', threshold: 1, timeoutMs: 90_000 },
+      { type: "probeTelemetry", maximum: 0.9 },
+    ],
+  },
+  {
+    id: "promtail-pipeline-stop",
+    name: "Promtail pipeline stop",
+    description: "Stops promtail, generates backend logs, and verifies telemetry completeness drops.",
+    expectedAlert: null,
+    estimatedDurationMs: 2 * 60 * 1000,
+    steps: [
+      { type: "docker", action: "stop", container: "mwa-promtail" },
+      { type: "load", path: "/api/search?q=Notebook&page=1&limit=5", method: "GET", durationMs: 30_000, concurrency: 2, intervalMs: 500, expectStatus: 200 },
+      { type: "probeTelemetry", maximum: 0.9 },
+      { type: "docker", action: "start", container: "mwa-promtail" },
+    ],
+  },
+  {
+    id: "tempo-pipeline-stop",
+    name: "Tempo pipeline stop",
+    description: "Stops Tempo, generates a traced request, and verifies trace lookup fails while other telemetry remains visible.",
+    expectedAlert: null,
+    estimatedDurationMs: 2 * 60 * 1000,
+    steps: [
+      { type: "docker", action: "stop", container: "mwa-tempo" },
+      { type: "http", path: "/api/search?q=Notebook&page=1&limit=5", method: "GET", expectStatus: 200, requestId: "chaos-tempo-stop", captureTrace: true },
+      { type: "tempoMissing" },
+      { type: "probeTelemetry", maximum: 0.9 },
+      { type: "docker", action: "start", container: "mwa-tempo" },
+    ],
+  },
+  {
+    id: "backend-disk-fill",
+    name: "Backend disk fill",
+    description: "Creates and removes a bounded temporary file in the backend container to validate disk panels.",
+    expectedAlert: null,
+    estimatedDurationMs: 2 * 60 * 1000,
+    steps: [
+      { type: "dockerExec", container: "mwa-backend", args: ["sh", "-c", `dd if=/dev/zero of=/tmp/mwa-chaos-disk-fill.bin bs=1M count=${Math.max(1, Math.floor(CHAOS_DISK_FILL_BYTES / 1024 / 1024))} conv=fsync`] },
+      { type: "waitForPrometheus", query: 'max(100 * (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint!~"/run.*|/var/lib/docker/.*"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint!~"/run.*|/var/lib/docker/.*"})))', threshold: 1, timeoutMs: 90_000 },
+      { type: "dockerExec", container: "mwa-backend", args: ["rm", "-f", "/tmp/mwa-chaos-disk-fill.bin"] },
+    ],
+  },
+  {
+    id: "backend-network-delay",
+    name: "Backend network delay",
+    description: "Applies tc netem delay to backend eth0 and verifies API p95 latency rises.",
+    expectedAlert: "APIHighLatencyP95",
+    estimatedDurationMs: 4 * 60 * 1000,
+    steps: [
+      { type: "dockerExec", container: "mwa-backend", args: ["tc", "qdisc", "replace", "dev", "eth0", "root", "netem", "delay", "200ms"] },
+      { type: "load", path: "/api/search?q=Notebook&page=1&limit=5", method: "GET", durationMs: CHAOS_DEFAULT_HOLD_MS, concurrency: 4, intervalMs: 150, expectStatus: 200 },
+      { type: "waitForPrometheus", query: "mwa:http_latency_p95_seconds:5m", threshold: 0.2, timeoutMs: 2 * 60 * 1000 },
+      { type: "dockerExec", container: "mwa-backend", args: ["tc", "qdisc", "del", "dev", "eth0", "root"] },
+    ],
+  },
+  {
+    id: "log-before-kill",
+    name: "Log before kill",
+    description: "Emits a 5xx log, kills backend, restarts it, and verifies the pre-kill trace is searchable in Loki.",
+    expectedAlert: "ServiceDown",
+    estimatedDurationMs: 3 * 60 * 1000,
+    steps: [
+      { type: "http", path: "/contract/error", method: "GET", expectStatus: 500, requestId: "chaos-before-kill", captureTrace: true },
+      { type: "docker", action: "kill", container: "mwa-backend" },
+      { type: "docker", action: "start", container: "mwa-backend" },
+      { type: "waitForPrometheus", query: 'up{job="mwa-backend"}', threshold: 1, timeoutMs: 2 * 60 * 1000 },
+      { type: "lokiTraceLogs" },
+    ],
+  },
 ];
 
 function appendLog(filePath, line) {
@@ -926,6 +1393,104 @@ function validateScenarioShape(scenario) {
   });
 
   return errors;
+}
+
+function getScenarioTemplateById(scenarioId) {
+  return SCENARIO_TEMPLATES.find((scenario) => scenario.id === scenarioId) || null;
+}
+
+function getScenarioGroup(scenario) {
+  return String(scenario?.id || "").startsWith("buyer-") ? "buyer" : `scenario:${scenario.id}`;
+}
+
+function getScenarioPublicSummary(scenario) {
+  return {
+    id: scenario.id,
+    name: scenario.name,
+    description: scenario.description,
+    mode: scenario.mode,
+    stepCount: Array.isArray(scenario.steps) ? scenario.steps.length : 0,
+    group: getScenarioGroup(scenario),
+  };
+}
+
+function firstExistingPath(candidates) {
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+async function getK6ScenarioCatalog() {
+  const catalogPath = firstExistingPath(K6_SCENARIO_CATALOG_PATHS);
+  if (catalogPath === null) {
+    return {
+      source: null,
+      packs: ["smoke", "contract", "buyer", "fault", "validation", "all"],
+      scenarios: [],
+      error: "k6 scenario catalog file was not found.",
+    };
+  }
+
+  try {
+    const moduleUrl = `${pathToFileURL(catalogPath).href}?mtime=${fs.statSync(catalogPath).mtimeMs}`;
+    const catalogModule = await import(moduleUrl);
+    const scenarios = Array.isArray(catalogModule.k6Scenarios) ? catalogModule.k6Scenarios : [];
+    const packs = Array.isArray(catalogModule.k6Packs) ? catalogModule.k6Packs : ["smoke", "contract", "buyer", "fault", "validation", "all"];
+    return {
+      source: catalogPath,
+      packs,
+      scenarios: scenarios.map((scenario) => ({
+        id: scenario.id,
+        name: scenario.name || scenario.id,
+        description: scenario.description || "",
+        pack: scenario.pack || "uncategorized",
+        tags: Array.isArray(scenario.tags) ? scenario.tags : [],
+        destructive: scenario.destructive === true,
+      })),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      source: catalogPath,
+      packs: ["smoke", "contract", "buyer", "fault", "validation", "all"],
+      scenarios: [],
+      error: error instanceof Error ? error.message : "Unable to load k6 scenario catalog.",
+    };
+  }
+}
+
+function getLatestK6Summary() {
+  const summaryPath = firstExistingPath(K6_SUMMARY_PATHS);
+  if (summaryPath === null) {
+    return {
+      found: false,
+      source: null,
+      summary: null,
+    };
+  }
+
+  try {
+    return {
+      found: true,
+      source: summaryPath,
+      summary: JSON.parse(fs.readFileSync(summaryPath, "utf8")),
+    };
+  } catch (error) {
+    return {
+      found: false,
+      source: summaryPath,
+      summary: null,
+      error: error instanceof Error ? error.message : "Unable to read k6 summary.",
+    };
+  }
+}
+
+function getK6RunCommand({ scenarioIds = [], pack = K6_SCENARIO_PACK_DEFAULT } = {}) {
+  const selectedScenarioIds = Array.isArray(scenarioIds)
+    ? scenarioIds.map((scenarioId) => String(scenarioId)).filter(Boolean)
+    : [];
+  if (selectedScenarioIds.length > 0) {
+    return `npm run monitoring:scenario:k6 -- --scenario ${selectedScenarioIds.join(",")}`;
+  }
+  return `npm run monitoring:scenario:k6 -- --pack ${pack || K6_SCENARIO_PACK_DEFAULT}`;
 }
 
 function evaluateAssertion(assertion, result) {
@@ -1115,6 +1680,93 @@ async function executeScenario(scenario) {
   };
 }
 
+function summarizeScenarioRun(scenario, run, startedAtMs) {
+  const failedSteps = run.results.filter((result) => !result.passed).map((result) => ({
+    id: result.id,
+    label: result.label,
+    method: result.method,
+    path: result.path,
+    status: result.status,
+    durationMs: result.durationMs,
+    preview: result.preview,
+    error: result.error,
+    assertions: result.assertions.filter((assertion) => !assertion.passed),
+  }));
+
+  return {
+    scenarioId: scenario.id,
+    scenarioName: scenario.name,
+    description: scenario.description,
+    mode: run.mode,
+    status: run.summary.passed ? "pass" : "fail",
+    durationMs: Date.now() - startedAtMs,
+    totalSteps: run.summary.totalSteps,
+    passedSteps: run.summary.passedSteps,
+    failedSteps: run.summary.failedSteps,
+    runId: run.runId,
+    failures: failedSteps,
+  };
+}
+
+async function executeScenarioForBatch(scenario) {
+  const startedAtMs = Date.now();
+  if (getScenarioGroup(scenario) === "buyer") {
+    await resetBackendSeedForScenarioCycle();
+  }
+  const run = await executeScenario(scenario);
+  await updateMonitoringKpis(scenario, run);
+  return summarizeScenarioRun(scenario, run, startedAtMs);
+}
+
+async function executeScenarioGroup(groupScenarios) {
+  const results = [];
+
+  for (const scenario of groupScenarios) {
+    results.push(await executeScenarioForBatch(scenario));
+  }
+
+  return results;
+}
+
+async function executeScenarioBatch(scenarios) {
+  const batchRunId = crypto.randomUUID();
+  await resetBackendSeedForScenarioCycle();
+  const indexedScenarios = scenarios.map((scenario, index) => ({ scenario, index }));
+  const groups = new Map();
+
+  indexedScenarios.forEach((entry) => {
+    const group = getScenarioGroup(entry.scenario);
+    groups.set(group, [...(groups.get(group) || []), entry]);
+  });
+
+  const groupedResults = await Promise.all([...groups.values()].map(async (entries) => {
+    const scenarioResults = await executeScenarioGroup(entries.map((entry) => entry.scenario));
+    return scenarioResults.map((result, index) => ({
+      result,
+      index: entries[index].index,
+    }));
+  }));
+
+  const results = groupedResults
+    .flat()
+    .sort((left, right) => left.index - right.index)
+    .map(({ result }) => result);
+  const passedScenarios = results.filter((result) => result.status === "pass").length;
+  const failedScenarios = results.length - passedScenarios;
+
+  return {
+    success: true,
+    runId: batchRunId,
+    summary: {
+      totalScenarios: results.length,
+      passedScenarios,
+      failedScenarios,
+      passed: failedScenarios === 0,
+    },
+    results,
+  };
+}
+
 function clampRatio(numerator, denominator) {
   if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
     return 0;
@@ -1202,6 +1854,738 @@ async function safeFetchJson(url) {
   }
 }
 
+function extractVectorMax(payload) {
+  const result = Array.isArray(payload?.data?.result) ? payload.data.result : [];
+  const values = result
+    .map((entry) => Number(entry?.value?.[1]))
+    .filter((value) => Number.isFinite(value));
+  return values.length === 0 ? 0 : Math.max(...values);
+}
+
+function resolveChaosValue(value, run) {
+  if (typeof value === "string") {
+    return value
+      .replace(/{{\s*run\.id\s*}}/g, run.id)
+      .replace(/{{\s*trace_id\s*}}/g, run.context.traceId || "");
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => resolveChaosValue(item, run));
+  }
+
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entryValue]) => [key, resolveChaosValue(entryValue, run)]));
+  }
+
+  return value;
+}
+
+async function resetBackendSeedForScenarioCycle() {
+  if (!SCENARIO_RESET_SEED_ENABLED) {
+    return;
+  }
+
+  const response = await fetch(`${SCENARIO_BACKEND_BASE_URL}/contract/qa/reset-seed`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Unable to reset backend seed before QA cycle (${response.status}): ${safePreview(body, 180)}`);
+  }
+}
+
+const chaosRuns = new Map();
+const chaosBatches = new Map();
+const chaosQueue = [];
+let activeChaosRunId = null;
+let latestChaosTraceId = "";
+
+function getChaosPublicScenarios() {
+  return CHAOS_SCENARIOS.map((scenario) => ({
+    id: scenario.id,
+    name: scenario.name,
+    description: scenario.description,
+    expectedAlert: scenario.expectedAlert,
+    stepCount: scenario.steps.length,
+    estimatedDurationMs: scenario.estimatedDurationMs,
+  }));
+}
+
+function trimChaosRuns() {
+  const cutoff = Date.now() - CHAOS_RUN_RETENTION_MS;
+  for (const [runId, run] of chaosRuns.entries()) {
+    if (run.finishedAtMs !== null && run.finishedAtMs < cutoff) {
+      chaosRuns.delete(runId);
+    }
+  }
+  for (const [batchId, batch] of chaosBatches.entries()) {
+    if (batch.createdAtMs < cutoff && batch.runIds.every((runId) => !chaosRuns.has(runId))) {
+      chaosBatches.delete(batchId);
+    }
+  }
+}
+
+function findChaosScenario(scenarioId) {
+  return CHAOS_SCENARIOS.find((scenario) => scenario.id === scenarioId) || null;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function formatChaosRun(run) {
+  return {
+    id: run.id,
+    batchId: run.batchId,
+    scenarioId: run.scenario.id,
+    scenarioName: run.scenario.name,
+    description: run.scenario.description,
+    expectedAlert: run.scenario.expectedAlert,
+    status: run.status,
+    phase: run.phase,
+    queuedAt: run.queuedAt,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    durationMs: (run.finishedAtMs || Date.now()) - (run.startedAtMs || run.queuedAtMs),
+    enabled: QA_CHAOS_ENABLED,
+    progress: {
+      completedSteps: run.completedSteps,
+      totalSteps: run.scenario.steps.length,
+    },
+    steps: run.steps,
+    observations: run.observations,
+    error: run.error,
+    blockedReason: run.blockedReason,
+  };
+}
+
+function getChaosRunSummary(runs) {
+  const counts = {
+    total: runs.length,
+    queued: 0,
+    running: 0,
+    passed: 0,
+    failed: 0,
+    blocked: 0,
+    cancelled: 0,
+  };
+
+  runs.forEach((run) => {
+    if (run.status === "queued") counts.queued += 1;
+    else if (run.status === "running") counts.running += 1;
+    else if (run.status === "pass") counts.passed += 1;
+    else if (run.status === "fail") counts.failed += 1;
+    else if (run.status === "blocked_by_safety_cap") counts.blocked += 1;
+    else if (run.status === "cancelled") counts.cancelled += 1;
+  });
+
+  return {
+    ...counts,
+    completed: counts.passed + counts.failed + counts.blocked + counts.cancelled,
+    activeRunId: activeChaosRunId,
+    queueDepth: chaosQueue.length,
+  };
+}
+
+function formatChaosBatch(batch) {
+  const runs = batch.runIds.map((runId) => chaosRuns.get(runId)).filter(Boolean);
+  return {
+    id: batch.id,
+    createdAt: batch.createdAt,
+    runIds: batch.runIds,
+    scenarioIds: batch.scenarioIds,
+    estimatedDurationMs: batch.estimatedDurationMs,
+    summary: getChaosRunSummary(runs),
+    runs: runs.map(formatChaosRun),
+  };
+}
+
+function getAllChaosRuns() {
+  return [...chaosRuns.values()].sort((left, right) => left.queuedAtMs - right.queuedAtMs);
+}
+
+function setChaosRunPhase(run, phase) {
+  run.phase = phase;
+  run.observations.push({ ts: nowIso(), phase });
+}
+
+function finishChaosRun(run, status, error = null, options = {}) {
+  if (run.finishedAtMs !== null) {
+    return;
+  }
+
+  run.status = status;
+  run.error = error;
+  run.finishedAtMs = Date.now();
+  run.finishedAt = nowIso();
+  run.phase = status;
+  if (status === "blocked_by_safety_cap") {
+    chaosRunsTotal.inc({ result: "blocked" });
+  } else {
+    chaosRunsTotal.inc({ result: status === "pass" ? "success" : "failure" });
+  }
+  releaseChaosResources(run);
+  if (activeChaosRunId === run.id) {
+    activeChaosRunId = null;
+  }
+  updateChaosQueueMetrics();
+  if (options.startNext !== false) {
+    startNextChaosRun();
+  }
+}
+
+function updateChaosQueueMetrics() {
+  chaosQueueBacklog.set(chaosQueue.length);
+  const oldestQueuedAtMs = chaosQueue
+    .map((runId) => chaosRuns.get(runId)?.queuedAtMs)
+    .filter((timestamp) => Number.isFinite(timestamp))
+    .sort((left, right) => left - right)[0];
+  chaosQueueOldestAgeSeconds.set(oldestQueuedAtMs === undefined ? 0 : (Date.now() - oldestQueuedAtMs) / 1000);
+  chaosActiveWorkers.set(activeChaosRunId === null ? 0 : 1);
+}
+
+function execFileText(file, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { timeout: options.timeout ?? 60_000, ...options }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+function assertChaosEnabled() {
+  if (!QA_CHAOS_ENABLED) {
+    const error = new Error("QA chaos runner is disabled. Start with monitoring/docker-compose.chaos.yml and QA_CHAOS_ENABLED=true.");
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+function assertAllowedContainer(container) {
+  if (!CHAOS_ALLOWED_CONTAINERS.has(container)) {
+    throw new Error(`Container is not allowed for chaos control: ${container}`);
+  }
+}
+
+function getDatabaseUrl() {
+  return process.env.DATABASE_URL || "postgresql://mwa:mwa@postgres:5432/mwa?schema=public";
+}
+
+function spawnTracked(run, command, args, options = {}) {
+  const child = spawn(command, args, {
+    stdio: options.stdio || "ignore",
+    env: options.env || process.env,
+  });
+  run.children.add(child);
+  child.once("exit", () => {
+    run.children.delete(child);
+  });
+  child.once("error", (error) => {
+    run.observations.push({ ts: nowIso(), phase: "child_error", command, message: error.message });
+  });
+  return child;
+}
+
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error("Chaos run was cancelled"));
+      return;
+    }
+    const timeout = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timeout);
+      reject(new Error("Chaos run was cancelled"));
+    }, { once: true });
+  });
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const signal = options.signal || AbortSignal.timeout(options.timeoutMs || 30_000);
+  return fetch(url, { ...options, signal });
+}
+
+async function executeChaosHttpStep(run, step) {
+  const body = step.body === undefined ? undefined : JSON.stringify(resolveChaosValue(step.body, run));
+  const headers = {
+    Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
+    "x-request-id": step.requestId ? `${step.requestId}-${run.id}` : `chaos-${run.id}`,
+    ...resolveChaosValue(step.headers || {}, run),
+  };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const response = await fetchWithTimeout(new URL(step.path, `${SCENARIO_BACKEND_BASE_URL}/`).toString(), {
+    method: step.method || "GET",
+    headers,
+    body,
+    timeoutMs: step.timeoutMs || 30_000,
+  });
+  const traceId = response.headers.get("x-trace-id") || "";
+  if (traceId.length > 0) {
+    latestChaosTraceId = traceId;
+    run.context.traceId = traceId;
+  }
+  const text = await response.text();
+  const ok = response.status === step.expectStatus;
+  return {
+    ok,
+    status: response.status,
+    traceId,
+    preview: safePreview(text, 240),
+  };
+}
+
+async function executeChaosLoadStep(run, step) {
+  const endAt = Date.now() + step.durationMs;
+  let requests = 0;
+  let expectedStatuses = 0;
+  const workers = Array.from({ length: step.concurrency }, async () => {
+    while (Date.now() < endAt && !run.abortController.signal.aborted) {
+      try {
+        const result = await executeChaosHttpStep(run, {
+          path: step.path,
+          method: step.method,
+          expectStatus: step.expectStatus,
+          headers: step.headers,
+          body: step.body,
+          requestId: step.requestId,
+          timeoutMs: 30_000,
+        });
+        requests += 1;
+        if (result.status === step.expectStatus) {
+          expectedStatuses += 1;
+        }
+      } catch (error) {
+        requests += 1;
+        run.observations.push({ ts: nowIso(), phase: "load_request_error", message: error.message });
+      }
+      await sleep(step.intervalMs, run.abortController.signal);
+    }
+  });
+  await Promise.all(workers);
+  return {
+    ok: expectedStatuses > 0,
+    requests,
+    expectedStatuses,
+    durationMs: step.durationMs,
+  };
+}
+
+async function executeChaosDockerStep(_run, step) {
+  assertAllowedContainer(step.container);
+  try {
+    await execFileText("docker", [step.action, step.container], { timeout: 60_000 });
+  } catch (error) {
+    const stderr = String(error.stderr || error.message || "");
+    if (step.action !== "start" || !stderr.includes("is already running")) {
+      throw error;
+    }
+  }
+  return { ok: true, action: step.action, container: step.container };
+}
+
+async function executeChaosDockerExecStep(_run, step) {
+  assertAllowedContainer(step.container);
+  if (!Array.isArray(step.args) || step.args.length === 0) {
+    throw new Error("dockerExec requires args");
+  }
+
+  await execFileText("docker", ["exec", step.container, ...step.args], { timeout: step.timeoutMs || 60_000 });
+  return { ok: true, container: step.container, args: step.args };
+}
+
+function executeChaosStressStep(run, step) {
+  if (step.mode === "memory" && step.bytes > CHAOS_MAX_MEMORY_BYTES) {
+    run.blockedReason = `Requested ${step.bytes} bytes exceeds CHAOS_MAX_MEMORY_BYTES=${CHAOS_MAX_MEMORY_BYTES}`;
+    return { ok: false, blocked: true, message: run.blockedReason };
+  }
+
+  const script = step.mode === "cpu"
+    ? "const end=Date.now()+Number(process.env.CHAOS_DURATION_MS);while(Date.now()<end){Math.sqrt(Math.random()*Number.MAX_SAFE_INTEGER)}"
+    : "const chunks=[];const target=Number(process.env.CHAOS_MEMORY_BYTES);let allocated=0;while(allocated<target){const size=Math.min(1048576,target-allocated);chunks.push(Buffer.alloc(size,1));allocated+=size}setTimeout(()=>{},Number(process.env.CHAOS_DURATION_MS));";
+  const workers = step.mode === "cpu" ? Math.max(1, step.workers || 1) : 1;
+  for (let index = 0; index < workers; index += 1) {
+    spawnTracked(run, process.execPath, ["-e", script], {
+      env: {
+        ...process.env,
+        CHAOS_DURATION_MS: String(step.durationMs),
+        CHAOS_MEMORY_BYTES: String(step.bytes || 0),
+      },
+    });
+  }
+  return { ok: true, mode: step.mode, workers, durationMs: step.durationMs, bytes: step.bytes || 0 };
+}
+
+async function prepareDeadlockTable() {
+  await execFileText("psql", [
+    getDatabaseUrl(),
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    "CREATE TABLE IF NOT EXISTS qa_deadlock_probe (id INT PRIMARY KEY, value INT NOT NULL DEFAULT 0); INSERT INTO qa_deadlock_probe(id, value) VALUES (1, 0), (2, 0) ON CONFLICT (id) DO NOTHING;",
+  ], { timeout: 30_000 });
+}
+
+async function executeChaosDbStep(run, step) {
+  if (step.action === "sleep-load") {
+    const sleepSeconds = Math.max(1, step.sleepSeconds || 30);
+    const deadline = Date.now() + step.durationMs;
+    const loopScript = [
+      "const { spawnSync } = require('child_process');",
+      "const deadline = Date.now() + Number(process.env.CHAOS_DURATION_MS);",
+      "while (Date.now() < deadline) {",
+      "  spawnSync('psql', [process.env.DATABASE_URL, '-v', 'ON_ERROR_STOP=1', '-c', `SELECT pg_sleep(${process.env.CHAOS_SLEEP_SECONDS})`], { stdio: 'ignore' });",
+      "}",
+    ].join("");
+    for (let index = 0; index < step.connections; index += 1) {
+      spawnTracked(run, process.execPath, ["-e", loopScript], {
+        env: {
+          ...process.env,
+          DATABASE_URL: getDatabaseUrl(),
+          CHAOS_DURATION_MS: String(step.durationMs),
+          CHAOS_SLEEP_SECONDS: String(sleepSeconds),
+        },
+      });
+    }
+    return { ok: true, action: step.action, connections: step.connections, durationMs: step.durationMs };
+  }
+
+  if (step.action === "deadlock") {
+    await prepareDeadlockTable();
+    const left = execFileText("psql", [
+      getDatabaseUrl(),
+      "-v",
+      "ON_ERROR_STOP=0",
+      "-c",
+      "BEGIN; UPDATE qa_deadlock_probe SET value = value + 1 WHERE id = 1; SELECT pg_sleep(2); UPDATE qa_deadlock_probe SET value = value + 1 WHERE id = 2; COMMIT;",
+    ], { timeout: 30_000 }).catch((error) => ({ error }));
+    const right = execFileText("psql", [
+      getDatabaseUrl(),
+      "-v",
+      "ON_ERROR_STOP=0",
+      "-c",
+      "BEGIN; UPDATE qa_deadlock_probe SET value = value + 1 WHERE id = 2; SELECT pg_sleep(2); UPDATE qa_deadlock_probe SET value = value + 1 WHERE id = 1; COMMIT;",
+    ], { timeout: 30_000 }).catch((error) => ({ error }));
+    const results = await Promise.all([left, right]);
+    const deadlockSeen = results.some((result) => String(result?.stderr || result?.error?.stderr || result?.error?.message || "").toLowerCase().includes("deadlock"));
+    return { ok: deadlockSeen, action: step.action, deadlockSeen };
+  }
+
+  throw new Error(`Unsupported db chaos action: ${step.action}`);
+}
+
+function extractPrometheusScalar(payload) {
+  return extractVectorMax(payload);
+}
+
+async function queryPrometheusValue(query) {
+  const response = await safeFetchJson(`${MONITORING_PROMETHEUS_BASE_URL}/api/v1/query?query=${encodeURIComponent(query)}`);
+  if (!response.ok) {
+    return { ok: false, value: 0, payload: response.body };
+  }
+  return { ok: true, value: extractPrometheusScalar(response.body), payload: response.body };
+}
+
+async function executeChaosWaitForPrometheusStep(run, step) {
+  const deadline = Date.now() + step.timeoutMs;
+  let lastValue = 0;
+  while (Date.now() < deadline && !run.abortController.signal.aborted) {
+    const result = await queryPrometheusValue(step.query);
+    lastValue = result.value;
+    run.observations.push({ ts: nowIso(), phase: "prometheus_poll", query: step.query, value: lastValue, threshold: step.threshold });
+    if (result.ok && lastValue >= step.threshold) {
+      return { ok: true, query: step.query, value: lastValue, threshold: step.threshold };
+    }
+    await sleep(CHAOS_POLL_INTERVAL_MS, run.abortController.signal);
+  }
+  if (step.blockOnTimeout) {
+    run.blockedReason = `Prometheus query did not reach threshold before safety timeout: ${step.query} last=${lastValue}`;
+    return { ok: false, blocked: true, query: step.query, value: lastValue, threshold: step.threshold };
+  }
+  return { ok: false, query: step.query, value: lastValue, threshold: step.threshold };
+}
+
+async function executeChaosWaitForAlertStep(run, step) {
+  const query = `ALERTS{alertname="${step.alertName}",alertstate="firing"}`;
+  return executeChaosWaitForPrometheusStep(run, {
+    query,
+    threshold: 1,
+    timeoutMs: step.timeoutMs,
+    blockOnTimeout: step.blockOnTimeout,
+  });
+}
+
+function tracePayloadContains(payload, needle) {
+  return JSON.stringify(payload || {}).includes(needle);
+}
+
+async function executeChaosTempoTraceStep(run, step) {
+  const traceId = run.context.traceId || latestChaosTraceId;
+  if (!traceId) {
+    return { ok: false, message: "No captured x-trace-id is available" };
+  }
+  const response = await safeFetchJson(`${MONITORING_GRAFANA_BASE_URL}/api/datasources/proxy/uid/tempo/api/traces/${encodeURIComponent(traceId)}`);
+  const directResponse = response.ok
+    ? response
+    : await safeFetchJson(`${process.env.MONITORING_TEMPO_BASE_URL || "http://tempo:3200"}/api/traces/${encodeURIComponent(traceId)}`);
+  const payloadText = JSON.stringify(directResponse.body || {});
+  const ok = directResponse.ok
+    && tracePayloadContains(directResponse.body, "mwa-backend")
+    && (step.statusCode === undefined || payloadText.includes(String(step.statusCode)));
+  return { ok, traceId, statusCode: step.statusCode, sourceOk: directResponse.ok };
+}
+
+async function executeChaosTempoMissingStep(run) {
+  const traceId = run.context.traceId || latestChaosTraceId;
+  if (!traceId) {
+    return { ok: false, message: "No captured x-trace-id is available" };
+  }
+
+  const response = await safeFetchJson(`${process.env.MONITORING_TEMPO_BASE_URL || "http://tempo:3200"}/api/traces/${encodeURIComponent(traceId)}`);
+  return { ok: !response.ok, traceId, sourceOk: response.ok };
+}
+
+async function executeChaosLokiTraceLogsStep(run) {
+  const traceId = run.context.traceId || latestChaosTraceId;
+  if (!traceId) {
+    return { ok: false, message: "No captured x-trace-id is available" };
+  }
+
+  const query = `{service_name="mwa-backend"} | json | trace_id="${traceId}"`;
+  const response = await safeFetchJson(`${MONITORING_LOKI_BASE_URL}/loki/api/v1/query?query=${encodeURIComponent(query)}`);
+  const resultCount = Array.isArray(response.body?.data?.result) ? response.body.data.result.length : 0;
+  return { ok: response.ok && resultCount > 0, traceId, resultCount };
+}
+
+async function executeChaosProbeTelemetryStep(_run, step) {
+  currentTelemetryCompletenessRatio = await probeTelemetryCompleteness();
+  labelCoverageRatio.set(await probeLabelCoverage());
+  updateKpiGauges();
+  const minimum = Number.isFinite(step.minimum) ? step.minimum : undefined;
+  const maximum = Number.isFinite(step.maximum) ? step.maximum : undefined;
+  const ok = (minimum === undefined || currentTelemetryCompletenessRatio >= minimum)
+    && (maximum === undefined || currentTelemetryCompletenessRatio <= maximum);
+  return { ok, value: currentTelemetryCompletenessRatio, minimum, maximum };
+}
+
+async function executeChaosStep(run, step, index) {
+  const startedAtMs = Date.now();
+  const stepResult = {
+    index,
+    type: step.type,
+    label: `${index + 1}. ${step.type}`,
+    status: "running",
+    startedAt: nowIso(),
+    finishedAt: null,
+    durationMs: 0,
+    details: null,
+  };
+  run.steps.push(stepResult);
+  setChaosRunPhase(run, stepResult.label);
+
+  try {
+    let details;
+    if (step.type === "http") details = await executeChaosHttpStep(run, step);
+    else if (step.type === "load") details = await executeChaosLoadStep(run, step);
+    else if (step.type === "docker") details = await executeChaosDockerStep(run, step);
+    else if (step.type === "dockerExec") details = await executeChaosDockerExecStep(run, step);
+    else if (step.type === "stress") details = executeChaosStressStep(run, step);
+    else if (step.type === "db") details = await executeChaosDbStep(run, step);
+    else if (step.type === "waitForPrometheus") details = await executeChaosWaitForPrometheusStep(run, step);
+    else if (step.type === "waitForAlert") details = await executeChaosWaitForAlertStep(run, step);
+    else if (step.type === "tempoTrace") details = await executeChaosTempoTraceStep(run, step);
+    else if (step.type === "tempoMissing") details = await executeChaosTempoMissingStep(run, step);
+    else if (step.type === "lokiTraceLogs") details = await executeChaosLokiTraceLogsStep(run, step);
+    else if (step.type === "probeTelemetry") details = await executeChaosProbeTelemetryStep(run, step);
+    else throw new Error(`Unsupported chaos step type: ${step.type}`);
+
+    stepResult.details = details;
+    stepResult.status = details.blocked ? "blocked" : details.ok ? "pass" : "fail";
+    if (details.blocked) {
+      run.status = "blocked_by_safety_cap";
+    }
+  } catch (error) {
+    stepResult.status = run.abortController.signal.aborted ? "cancelled" : "fail";
+    stepResult.details = { ok: false, message: error instanceof Error ? error.message : "Chaos step failed" };
+  } finally {
+    stepResult.finishedAt = nowIso();
+    stepResult.durationMs = Date.now() - startedAtMs;
+    run.completedSteps += 1;
+  }
+
+  return stepResult;
+}
+
+function releaseChaosResources(run) {
+  for (const child of run.children) {
+    if (!child.killed) {
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (!child.killed) child.kill("SIGKILL");
+      }, 3000);
+    }
+  }
+  run.children.clear();
+}
+
+async function recoverChaosTargets(run = null) {
+  const startedAtMs = Date.now();
+  const recoveryStep = run
+    ? {
+      index: run.steps.length,
+      type: "recovery",
+      label: `${run.steps.length + 1}. recovery`,
+      status: "running",
+      startedAt: nowIso(),
+      finishedAt: null,
+      durationMs: 0,
+      details: null,
+    }
+    : null;
+  if (recoveryStep) {
+    run.steps.push(recoveryStep);
+  }
+  const recovery = [];
+  for (const container of ["mwa-backend", "mwa-promtail", "mwa-tempo"]) {
+    try {
+      await executeChaosDockerStep(null, { action: "start", container });
+      recovery.push({ target: container, action: "start", ok: true });
+    } catch (error) {
+      recovery.push({ target: container, action: "start", ok: false, message: error.message });
+    }
+  }
+  try {
+    await executeChaosDockerExecStep(null, { container: "mwa-backend", args: ["tc", "qdisc", "del", "dev", "eth0", "root"], timeoutMs: 30_000 });
+    recovery.push({ target: "mwa-backend", action: "netem-cleanup", ok: true });
+  } catch (error) {
+    recovery.push({ target: "mwa-backend", action: "netem-cleanup", ok: true, message: "no qdisc to clean" });
+  }
+  try {
+    await executeChaosDockerExecStep(null, { container: "mwa-backend", args: ["rm", "-f", "/tmp/mwa-chaos-disk-fill.bin"], timeoutMs: 30_000 });
+    recovery.push({ target: "mwa-backend", action: "disk-cleanup", ok: true });
+  } catch (error) {
+    recovery.push({ target: "mwa-backend", action: "disk-cleanup", ok: false, message: error.message });
+  }
+  if (run) {
+    releaseChaosResources(run);
+    run.observations.push({ ts: nowIso(), phase: "recovery", recovery });
+  }
+  if (recoveryStep) {
+    recoveryStep.finishedAt = nowIso();
+    recoveryStep.durationMs = Date.now() - startedAtMs;
+    recoveryStep.status = recovery.every((entry) => entry.ok) ? "pass" : "fail";
+    recoveryStep.details = { ok: recovery.every((entry) => entry.ok), recovery };
+  }
+  return recovery;
+}
+
+async function runChaos(run) {
+  run.status = "running";
+  run.startedAtMs = Date.now();
+  run.startedAt = nowIso();
+  activeChaosRunId = run.id;
+  updateChaosQueueMetrics();
+
+  try {
+    for (let index = 0; index < run.scenario.steps.length; index += 1) {
+      if (run.abortController.signal.aborted) {
+        finishChaosRun(run, "cancelled", "Chaos run was cancelled");
+        return;
+      }
+      const result = await executeChaosStep(run, run.scenario.steps[index], index);
+      if (result.status === "blocked") {
+        finishChaosRun(run, "blocked_by_safety_cap", run.blockedReason || result.details?.message || "Blocked by safety cap");
+        return;
+      }
+      if (result.status === "fail") {
+        await recoverChaosTargets(run);
+        finishChaosRun(run, "fail", result.details?.message || `${result.type} step failed`);
+        return;
+      }
+    }
+    await recoverChaosTargets(run);
+    finishChaosRun(run, "pass");
+  } catch (error) {
+    await recoverChaosTargets(run).catch(() => []);
+    finishChaosRun(run, run.abortController.signal.aborted ? "cancelled" : "fail", error instanceof Error ? error.message : "Chaos run failed");
+  }
+}
+
+function startNextChaosRun() {
+  if (activeChaosRunId !== null || chaosQueue.length === 0) {
+    updateChaosQueueMetrics();
+    return;
+  }
+  const nextRunId = chaosQueue.shift();
+  const run = chaosRuns.get(nextRunId);
+  if (!run || run.status !== "queued") {
+    startNextChaosRun();
+    return;
+  }
+  updateChaosQueueMetrics();
+  runChaos(run);
+}
+
+function enqueueChaosRun(scenario, batchId = null) {
+  trimChaosRuns();
+  const run = {
+    id: crypto.randomUUID(),
+    batchId,
+    scenario,
+    status: "queued",
+    phase: "queued",
+    queuedAtMs: Date.now(),
+    queuedAt: nowIso(),
+    startedAtMs: null,
+    startedAt: null,
+    finishedAtMs: null,
+    finishedAt: null,
+    completedSteps: 0,
+    steps: [],
+    observations: [],
+    context: {},
+    error: null,
+    blockedReason: null,
+    abortController: new AbortController(),
+    children: new Set(),
+  };
+  chaosRuns.set(run.id, run);
+  chaosQueue.push(run.id);
+  updateChaosQueueMetrics();
+  startNextChaosRun();
+  return run;
+}
+
+function enqueueChaosBatch(scenarios) {
+  trimChaosRuns();
+  const batch = {
+    id: crypto.randomUUID(),
+    createdAtMs: Date.now(),
+    createdAt: nowIso(),
+    scenarioIds: scenarios.map((scenario) => scenario.id),
+    estimatedDurationMs: scenarios.reduce((total, scenario) => total + scenario.estimatedDurationMs, 0),
+    runIds: [],
+  };
+  chaosBatches.set(batch.id, batch);
+  scenarios.forEach((scenario) => {
+    const run = enqueueChaosRun(scenario, batch.id);
+    batch.runIds.push(run.id);
+  });
+  return batch;
+}
+
 async function probeDrilldownTargets() {
   const probes = [
     { target: KPI_DRILLDOWN_TARGETS.prometheus, url: `${MONITORING_PROMETHEUS_BASE_URL}/api/v1/query?query=up` },
@@ -1278,10 +2662,22 @@ function hasRequiredLogEvent(logBody, telemetryTarget) {
   return telemetryTarget.eventNames.some((eventName) => logBody.includes(eventName));
 }
 
+async function queryLokiScalar(query) {
+  const response = await safeFetchJson(`${MONITORING_LOKI_BASE_URL}/loki/api/v1/query?query=${encodeURIComponent(query)}`);
+  if (!response.ok) {
+    return { ok: false, value: 0 };
+  }
+
+  return { ok: true, value: extractVectorMax(response.body) };
+}
+
 async function probeTelemetryCompleteness() {
-  const [metricsResponse, logQueryResponse] = await Promise.all([
+  const [metricsResponse, logQueryResponse, prometheusTargetResponse, lokiReadyResponse, tempoReadyResponse] = await Promise.all([
     safeFetchText(`${SCENARIO_BACKEND_BASE_URL}/metrics`),
     safeFetchJson(`${MONITORING_LOKI_BASE_URL}/loki/api/v1/query?query=${encodeURIComponent('{service_name="mwa-backend"} |= "event_name"')}`),
+    safeFetchJson(`${MONITORING_PROMETHEUS_BASE_URL}/api/v1/query?query=${encodeURIComponent('up{job="mwa-backend"}')}`),
+    safeFetchText(`${MONITORING_LOKI_BASE_URL}/ready`),
+    safeFetchText(`${process.env.MONITORING_TEMPO_BASE_URL || "http://tempo:3200"}/ready`),
   ]);
 
   const metricsText = metricsResponse.ok ? metricsResponse.body : "";
@@ -1289,8 +2685,25 @@ async function probeTelemetryCompleteness() {
   const successfulEndpoints = KPI_TELEMETRY_ENDPOINTS.filter((telemetryTarget) => (
     hasRequiredMetricFamily(metricsText, telemetryTarget) && hasRequiredLogEvent(logBody, telemetryTarget)
   )).length;
+  const businessCompleteness = clampRatio(successfulEndpoints, KPI_TELEMETRY_ENDPOINTS.length);
+  const backendScraped = extractVectorMax(prometheusTargetResponse.body) >= 1 ? 1 : 0;
+  const lokiReady = lokiReadyResponse.ok ? 1 : 0;
+  const tempoReady = tempoReadyResponse.ok ? 1 : 0;
 
-  return clampRatio(successfulEndpoints, KPI_TELEMETRY_ENDPOINTS.length);
+  return (businessCompleteness + backendScraped + lokiReady + tempoReady) / 4;
+}
+
+async function probeLabelCoverage() {
+  const [allLogs, customerLogs] = await Promise.all([
+    queryLokiScalar('sum(count_over_time({service_name="mwa-backend"} | json | request_id != "" [5m]))'),
+    queryLokiScalar('sum(count_over_time({service_name="mwa-backend"} | json | customer_id != "" [5m]))'),
+  ]);
+
+  if (!allLogs.ok || allLogs.value === 0) {
+    return 0;
+  }
+
+  return clampRatio(customerLogs.value, allLogs.value);
 }
 
 function updateKpiGauges() {
@@ -1368,19 +2781,27 @@ async function updateMonitoringKpis(scenario, run) {
   }
 
   currentTelemetryCompletenessRatio = await probeTelemetryCompleteness();
+  labelCoverageRatio.set(await probeLabelCoverage());
   updateKpiGauges();
 }
 
-function renderScenarioPage() {
+async function renderScenarioPage() {
+  const k6Catalog = await getK6ScenarioCatalog();
+  const latestK6Summary = getLatestK6Summary();
   const bootstrapJson = escapeForInlineScript({
-    templates: SCENARIO_TEMPLATES,
-    defaultTemplateId: SCENARIO_TEMPLATES[0]?.id || "",
-    monitoringLinks: {
-      prometheus: MONITORING_PROMETHEUS_BASE_URL,
-      loki: MONITORING_LOKI_BASE_URL,
-      grafana: MONITORING_GRAFANA_BASE_URL,
+    k6: {
+      catalog: k6Catalog,
+      latestSummary: latestK6Summary,
+      runnerEnabled: QA_K6_RUNNER_ENABLED,
+      defaultPack: K6_SCENARIO_PACK_DEFAULT,
+      command: getK6RunCommand({ pack: K6_SCENARIO_PACK_DEFAULT }),
     },
+    templates: SCENARIO_TEMPLATES.map((scenario) => getScenarioPublicSummary(scenario)),
     backendBaseUrl: SCENARIO_BACKEND_BASE_URL,
+    chaos: {
+      enabled: QA_CHAOS_ENABLED,
+      scenarios: getChaosPublicScenarios(),
+    },
   });
 
   return `<!DOCTYPE html>
@@ -1395,105 +2816,113 @@ function renderScenarioPage() {
   <main class="shell">
     <header class="app-header">
       <div class="title-block">
-        <h1>Scenario Testing Web</h1>
-        <p>API 시나리오를 선택, 편집, 실행하고 observability 진입점까지 이어서 확인합니다.</p>
+        <h1>k6 Scenario Console</h1>
+        <p>k6 packs are the primary test workflow. Legacy web checks remain available below.</p>
       </div>
       <div class="header-meta">
         <span class="chip mono">backend ${escapeHtml(SCENARIO_BACKEND_BASE_URL)}</span>
-        <span class="chip">sequential / parallel</span>
-        <span class="chip">guarded paths</span>
+        <span class="chip">${escapeHtml(k6Catalog.scenarios.length)} k6 scenarios</span>
+        <span class="chip">${SCENARIO_TEMPLATES.length} legacy checks</span>
+        <span class="chip">chaos ${QA_CHAOS_ENABLED ? "enabled" : "disabled"}</span>
       </div>
     </header>
 
-    <section class="layout">
-      <aside class="sidebar">
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <h2>Scenario Library</h2>
-              <p>표준 템플릿을 불러와 바로 실행합니다.</p>
+    <section class="runner-layout">
+      <section class="panel k6-panel">
+        <div class="panel-header">
+          <div>
+            <h2>k6 Primary Packs</h2>
+            <p>Run smoke in CI, then use full packs manually for deeper validation.</p>
+          </div>
+          <span id="k6-runner-enabled" class="status-pill ${QA_K6_RUNNER_ENABLED ? "status-valid" : "status-neutral"}">${QA_K6_RUNNER_ENABLED ? "RUNNER ENABLED" : "CLI ONLY"}</span>
+        </div>
+        <div class="k6-layout">
+          <div>
+            <div id="k6-pack-tabs" class="pack-tabs"></div>
+            <div id="k6-scenario-list" class="scenario-list"></div>
+          </div>
+          <div class="k6-runner">
+            <div class="button-row">
+              <button id="k6-run-pack-button" class="button-primary" type="button">Run pack</button>
+              <button id="k6-run-selected-button" class="button-secondary" type="button">Run selected</button>
+              <button id="k6-select-all-button" class="button-ghost" type="button">Select pack</button>
+              <button id="k6-clear-button" class="button-ghost" type="button">Clear</button>
             </div>
+            <div id="k6-summary-grid" class="summary-grid"></div>
+            <div id="k6-status" class="result-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel control-panel">
+        <div class="control-main">
+          <div>
+            <h2>Legacy Web Checks</h2>
+            <p>Compatibility runner for the previous web-defined checks.</p>
+          </div>
+          <div class="button-row">
+            <button id="run-all-button" class="button-primary" type="button">Run all</button>
+            <button id="run-selected-button" class="button-secondary" type="button">Run selected</button>
+            <button id="select-all-button" class="button-ghost" type="button">Select all</button>
+            <button id="clear-button" class="button-ghost" type="button">Clear</button>
+          </div>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-head">
+            <span id="run-status" class="status-pill status-neutral" role="status" aria-live="polite">Ready</span>
+            <span id="selected-count" class="muted tiny">0 selected</span>
+          </div>
+          <div class="progress-track" aria-hidden="true"><div id="progress-bar" class="progress-bar"></div></div>
+        </div>
+      </section>
+
+      <section class="content-grid">
+        <section class="panel scenario-panel">
+          <div class="panel-header">
+            <h2>Checklist</h2>
             <span id="template-count" class="chip">0</span>
           </div>
-          <label class="field-label" for="template-search">Search scenarios</label>
-          <input id="template-search" class="search-input" type="search" placeholder="name, id, tag" autocomplete="off" />
-          <div id="template-list" class="template-list"></div>
+          <div id="scenario-list" class="scenario-list"></div>
         </section>
-        <section class="panel">
-          <h3>Guardrails</h3>
-          <div class="assertion-list">
-            <div class="assertion-item">허용 path: <span class="mono">/health</span>, <span class="mono">/metrics</span>, <span class="mono">/api/*</span></div>
-            <div class="assertion-item">허용 method: <span class="mono">GET / POST / PATCH / DELETE</span></div>
-            <div class="assertion-item">지원 assertion: status, json_path, text_includes, content_type_includes</div>
-            <div class="assertion-item">사용자 흐름은 <span class="mono">x-customer-id</span>, body, 이전 step 결과 참조를 사용할 수 있습니다.</div>
-          </div>
-        </section>
-      </aside>
 
-      <section class="workspace">
-        <section class="panel editor-panel">
-          <div class="editor-toolbar">
-            <div>
-              <h2>Scenario Editor</h2>
-              <p id="scenario-description">Template + JSON editing</p>
-            </div>
-            <div class="button-row">
-              <button id="format-button" class="button-secondary" type="button">Format JSON</button>
-              <button id="copy-button" class="button-secondary" type="button">Copy JSON</button>
-              <button id="validate-button" class="button-secondary" type="button">Validate</button>
-              <button id="reset-button" class="button-ghost" type="button">Reset</button>
-              <button id="run-button" class="button-primary" type="button">Run scenario</button>
-            </div>
+        <section class="panel result-panel">
+          <div class="panel-header">
+            <h2>Results</h2>
+            <span id="run-id" class="chip mono">no run</span>
           </div>
-          <textarea id="scenario-editor" spellcheck="false" aria-label="Scenario JSON editor"></textarea>
-          <div class="status-line" role="status" aria-live="polite">
-            <span id="validation-pill" class="status-pill status-valid">Ready</span>
-            <span id="editor-dirty" class="status-pill status-neutral">Clean</span>
-            <span class="mono tiny">POST /qa/scenarios/run</span>
+          <div id="summary-grid" class="summary-grid"></div>
+          <div id="result-list" class="result-list">
+            <div class="empty-state">Run all or selected scenarios to see results.</div>
           </div>
-          <ul id="validation-errors" class="error-list" hidden></ul>
         </section>
       </section>
 
-      <aside class="inspector">
-        <section class="panel">
-          <div class="result-toolbar">
-            <div>
-              <h2>Execution</h2>
-              <p>선택한 템플릿의 실행 범위와 진행 상태를 확인합니다.</p>
+      <section class="panel chaos-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Chaos Runs</h2>
+            <p>전용 로컬/데모 스택에서 실제 부하와 장애를 장시간 주입합니다.</p>
+          </div>
+          <span id="chaos-enabled" class="status-pill ${QA_CHAOS_ENABLED ? "status-valid" : "status-neutral"}">${QA_CHAOS_ENABLED ? "ENABLED" : "DISABLED"}</span>
+        </div>
+        <div class="chaos-layout">
+          <div id="chaos-list" class="chaos-list"></div>
+          <div class="chaos-runner">
+            <div class="button-row">
+              <button id="chaos-run-all-button" class="button-primary" type="button">Run all chaos</button>
+              <button id="chaos-run-selected-button" class="button-secondary" type="button">Run selected</button>
+              <button id="chaos-select-all-button" class="button-ghost" type="button">Select all</button>
+              <button id="chaos-clear-button" class="button-ghost" type="button">Clear</button>
+              <button id="chaos-cancel-button" class="button-secondary" type="button">Cancel active</button>
+              <button id="chaos-recover-button" class="button-ghost" type="button">Recover all</button>
             </div>
-            <div class="execution-state">
-              <div id="run-status" class="status-pill status-valid" role="status" aria-live="polite">No run yet</div>
+            <div id="chaos-summary-grid" class="summary-grid"></div>
+            <div id="chaos-status" class="chaos-status">
+              <div class="empty-state">Select a chaos scenario to see details.</div>
             </div>
           </div>
-          <div id="run-status-detail" class="run-status-detail mono tiny" hidden></div>
-          <div id="execution-grid" class="execution-grid"></div>
-          <div id="step-status-list" class="step-status-list"></div>
-        </section>
-        <section class="panel">
-          <div class="result-toolbar">
-            <div>
-              <h2>Results</h2>
-              <p>실패 step을 먼저 펼쳐 assertion verdict를 확인합니다.</p>
-            </div>
-          </div>
-          <div id="summary-grid" class="summary-grid" hidden></div>
-          <div id="result-list" class="result-list">
-            <div class="result-card">
-              <div class="result-body muted">시나리오를 실행하면 결과가 여기에 표시됩니다.</div>
-            </div>
-          </div>
-        </section>
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <h2>Observability</h2>
-              <p>실행 후 run id와 request id로 로그 확인까지 이동합니다.</p>
-            </div>
-          </div>
-          <div id="observability-list" class="observability-list"></div>
-        </section>
-      </aside>
+        </div>
+      </section>
     </section>
   </main>
 
@@ -1659,6 +3088,12 @@ const telemetryCompletenessRatio = new client.Gauge({
   registers: [register],
 });
 
+const labelCoverageRatio = new client.Gauge({
+  name: "mwa_monitoring_label_coverage_ratio",
+  help: "최근 backend 로그 중 customer_id 라벨이 채워진 요청 비율",
+  registers: [register],
+});
+
 const drilldownSuccessRatio = new client.Gauge({
   name: "mwa_monitoring_drilldown_success_ratio",
   help: "드릴다운 프로브 성공 비율",
@@ -1683,6 +3118,37 @@ const scenarioReproductionRatio = new client.Gauge({
   registers: [register],
 });
 
+const chaosRunsTotal = new client.Counter({
+  name: "mwa_chaos_runs_total",
+  help: "QA chaos run results",
+  labelNames: ["result"],
+  registers: [register],
+});
+
+const chaosQueueBacklog = new client.Gauge({
+  name: "mwa_chaos_queue_backlog",
+  help: "Queued QA chaos runs waiting for execution",
+  registers: [register],
+});
+
+const chaosQueueOldestAgeSeconds = new client.Gauge({
+  name: "mwa_chaos_queue_oldest_age_seconds",
+  help: "Age in seconds of the oldest queued QA chaos run",
+  registers: [register],
+});
+
+const chaosActiveWorkers = new client.Gauge({
+  name: "mwa_chaos_active_workers",
+  help: "Active QA chaos workers inside the demo runner",
+  registers: [register],
+});
+
+const averageOrderValueWon = new client.Gauge({
+  name: "mwa_average_order_value_won",
+  help: "Configured average order value used for demo revenue loss estimates",
+  registers: [register],
+});
+
 summaryGenerationsTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
 summaryGenerationsTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
 scenarioRunsTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
@@ -1695,7 +3161,12 @@ alertCoverageChecksTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
 alertCoverageChecksTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
 actionableIncidentChecksTotal.inc({ result: KPI_RESULT_LABELS.success }, 0);
 actionableIncidentChecksTotal.inc({ result: KPI_RESULT_LABELS.failure }, 0);
+chaosRunsTotal.inc({ result: "success" }, 0);
+chaosRunsTotal.inc({ result: "failure" }, 0);
+chaosRunsTotal.inc({ result: "blocked" }, 0);
+averageOrderValueWon.set(CHAOS_AVERAGE_ORDER_VALUE_WON);
 updateKpiGauges();
+updateChaosQueueMetrics();
 
 const app = express();
 app.use(
@@ -1746,8 +3217,84 @@ app.get("/", (_req, res) => {
   res.type("html").send(renderPage());
 });
 
-app.get("/qa/scenarios", (_req, res) => {
-  res.type("html").send(renderScenarioPage());
+app.get("/qa/scenarios", async (_req, res) => {
+  res.type("html").send(await renderScenarioPage());
+});
+
+app.get("/qa/scenarios/k6/catalog", async (_req, res) => {
+  const catalog = await getK6ScenarioCatalog();
+  res.json({
+    success: catalog.error === null,
+    catalog,
+  });
+});
+
+app.get("/qa/scenarios/k6/latest-summary", (_req, res) => {
+  res.json({
+    success: true,
+    latestSummary: getLatestK6Summary(),
+  });
+});
+
+app.post("/qa/scenarios/k6/run", async (req, res) => {
+  const scenarioIds = Array.isArray(req.body?.scenarioIds)
+    ? req.body.scenarioIds.map((scenarioId) => String(scenarioId)).filter(Boolean)
+    : [];
+  const pack = String(req.body?.pack || K6_SCENARIO_PACK_DEFAULT);
+  const command = getK6RunCommand({ scenarioIds, pack });
+
+  if (!QA_K6_RUNNER_ENABLED) {
+    res.status(501).json({
+      success: false,
+      runnerEnabled: false,
+      command,
+      errors: ["k6 web runner is disabled. Run the command from the repository root."],
+    });
+    return;
+  }
+
+  const cliPath = firstExistingPath(K6_RUNNER_CLI_PATHS);
+  if (cliPath === null) {
+    res.status(500).json({
+      success: false,
+      runnerEnabled: true,
+      command,
+      errors: ["k6 runner CLI was not found."],
+    });
+    return;
+  }
+
+  const args = [cliPath, "k6"];
+  if (scenarioIds.length > 0) {
+    args.push("--scenario", scenarioIds.join(","));
+  } else {
+    args.push("--pack", pack);
+  }
+
+  const child = spawn(process.execPath, args, {
+    cwd: path.dirname(path.dirname(path.dirname(path.dirname(cliPath)))),
+    env: {
+      ...process.env,
+      BASE_URL: SCENARIO_BACKEND_BASE_URL,
+      RESET_SEED: "true",
+      SLEEP_SECONDS: process.env.K6_WEB_SLEEP_SECONDS || "0.2",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+  child.on("close", (code) => {
+    res.status(code === 0 ? 200 : 500).json({
+      success: code === 0,
+      runnerEnabled: true,
+      command,
+      exitCode: code,
+      stdout,
+      stderr,
+    });
+  });
 });
 
 app.post("/qa/scenarios/run", async (req, res) => {
@@ -1776,6 +3323,218 @@ app.post("/qa/scenarios/run", async (req, res) => {
     success: true,
     run,
   });
+});
+
+app.post("/qa/scenarios/run-batch", async (req, res) => {
+  const scenarioIds = req.body?.scenarioIds;
+
+  if (!Array.isArray(scenarioIds) || scenarioIds.length === 0) {
+    res.status(400).json({
+      success: false,
+      errors: ["scenarioIds는 1개 이상의 시나리오 id 배열이어야 합니다."],
+    });
+    return;
+  }
+
+  const uniqueScenarioIds = [...new Set(scenarioIds.map((scenarioId) => String(scenarioId)))];
+  const scenarios = uniqueScenarioIds.map((scenarioId) => getScenarioTemplateById(scenarioId));
+  const missingScenarioIds = uniqueScenarioIds.filter((_scenarioId, index) => scenarios[index] === null);
+
+  if (missingScenarioIds.length > 0) {
+    res.status(400).json({
+      success: false,
+      errors: missingScenarioIds.map((scenarioId) => `Unknown scenario id: ${scenarioId}`),
+    });
+    return;
+  }
+
+  const validationErrors = scenarios.flatMap((scenario) => (
+    validateScenarioShape(scenario).map((error) => `${scenario.id}: ${error}`)
+  ));
+
+  if (validationErrors.length > 0) {
+    res.status(400).json({
+      success: false,
+      errors: validationErrors,
+    });
+    return;
+  }
+
+  try {
+    const batchRun = await executeScenarioBatch(scenarios);
+    res.json(batchRun);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      errors: [error instanceof Error ? error.message : "Batch execution failed"],
+    });
+  }
+});
+
+app.get("/qa/chaos/scenarios", (_req, res) => {
+  res.json({
+    success: true,
+    enabled: QA_CHAOS_ENABLED,
+    scenarios: getChaosPublicScenarios(),
+  });
+});
+
+app.get("/qa/chaos/runs", (_req, res) => {
+  const runs = getAllChaosRuns();
+  res.json({
+    success: true,
+    enabled: QA_CHAOS_ENABLED,
+    summary: getChaosRunSummary(runs),
+    runs: runs.map(formatChaosRun),
+  });
+});
+
+app.get("/qa/chaos/batches/:batchId", (req, res) => {
+  const batch = chaosBatches.get(req.params.batchId);
+  if (!batch) {
+    res.status(404).json({
+      success: false,
+      errors: [`Unknown chaos batch id: ${req.params.batchId}`],
+    });
+    return;
+  }
+
+  res.json({
+    success: true,
+    batch: formatChaosBatch(batch),
+  });
+});
+
+app.post("/qa/chaos/runs", (req, res) => {
+  try {
+    assertChaosEnabled();
+    const scenarioId = String(req.body?.scenarioId || "");
+    const scenario = findChaosScenario(scenarioId);
+    if (scenario === null) {
+      res.status(400).json({
+        success: false,
+        errors: [`Unknown chaos scenario id: ${scenarioId}`],
+      });
+      return;
+    }
+    const run = enqueueChaosRun(scenario);
+    res.status(202).json({
+      success: true,
+      run: formatChaosRun(run),
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      success: false,
+      errors: [error instanceof Error ? error.message : "Unable to start chaos run"],
+    });
+  }
+});
+
+app.post("/qa/chaos/run-batch", (req, res) => {
+  try {
+    assertChaosEnabled();
+    const scenarioIds = Array.isArray(req.body?.scenarioIds)
+      ? [...new Set(req.body.scenarioIds.map((scenarioId) => String(scenarioId)))]
+      : [];
+    if (scenarioIds.length === 0) {
+      res.status(400).json({
+        success: false,
+        errors: ["scenarioIds must contain at least one chaos scenario id"],
+      });
+      return;
+    }
+
+    const scenarios = scenarioIds.map((scenarioId) => findChaosScenario(scenarioId));
+    const missingScenarioIds = scenarioIds.filter((_scenarioId, index) => scenarios[index] === null);
+    if (missingScenarioIds.length > 0) {
+      res.status(400).json({
+        success: false,
+        errors: missingScenarioIds.map((scenarioId) => `Unknown chaos scenario id: ${scenarioId}`),
+      });
+      return;
+    }
+
+    const batch = enqueueChaosBatch(scenarios);
+    res.status(202).json({
+      success: true,
+      batch: formatChaosBatch(batch),
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      success: false,
+      errors: [error instanceof Error ? error.message : "Unable to start chaos batch"],
+    });
+  }
+});
+
+app.get("/qa/chaos/runs/:runId", (req, res) => {
+  const run = chaosRuns.get(req.params.runId);
+  if (!run) {
+    res.status(404).json({
+      success: false,
+      errors: [`Unknown chaos run id: ${req.params.runId}`],
+    });
+    return;
+  }
+  res.json({
+    success: true,
+    run: formatChaosRun(run),
+  });
+});
+
+app.post("/qa/chaos/runs/:runId/cancel", async (req, res) => {
+  const run = chaosRuns.get(req.params.runId);
+  if (!run) {
+    res.status(404).json({
+      success: false,
+      errors: [`Unknown chaos run id: ${req.params.runId}`],
+    });
+    return;
+  }
+
+  run.abortController.abort();
+  if (run.status === "queued") {
+    const queueIndex = chaosQueue.indexOf(run.id);
+    if (queueIndex >= 0) {
+      chaosQueue.splice(queueIndex, 1);
+    }
+    finishChaosRun(run, "cancelled", "Chaos run was cancelled before start");
+  } else {
+    await recoverChaosTargets(run);
+    finishChaosRun(run, "cancelled", "Chaos run was cancelled");
+  }
+  res.json({
+    success: true,
+    run: formatChaosRun(run),
+  });
+});
+
+app.post("/qa/chaos/recover", async (_req, res) => {
+  try {
+    assertChaosEnabled();
+    for (const run of chaosRuns.values()) {
+      if (run.status === "running" || run.status === "queued") {
+        run.abortController.abort();
+        releaseChaosResources(run);
+        if (run.status === "queued") {
+          const queueIndex = chaosQueue.indexOf(run.id);
+          if (queueIndex >= 0) chaosQueue.splice(queueIndex, 1);
+        }
+        finishChaosRun(run, "cancelled", "Cancelled by global recovery", { startNext: false });
+      }
+    }
+    const recovery = await recoverChaosTargets();
+    updateChaosQueueMetrics();
+    res.json({
+      success: true,
+      recovery,
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      success: false,
+      errors: [error instanceof Error ? error.message : "Chaos recovery failed"],
+    });
+  }
 });
 
 function logOrderEvent(payload) {
@@ -1834,9 +3593,10 @@ app.get("/health", async (_req, res) => {
   }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, HOST, () => {
   const line = JSON.stringify({
     event: "server_start",
+    host: HOST,
     port: PORT,
     catalog_skus: PRODUCTS.map((p) => p.id),
     ts: new Date().toISOString(),

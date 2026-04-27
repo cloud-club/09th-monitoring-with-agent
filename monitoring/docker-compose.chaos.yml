@@ -1,0 +1,24 @@
+services:
+  mwa-backend:
+    cap_add:
+      - NET_ADMIN
+
+  mwa-demo:
+    build:
+      context: ..
+      dockerfile: monitoring/demo/Dockerfile
+      args:
+        INSTALL_CHAOS_TOOLS: "true"
+    environment:
+      - QA_CHAOS_ENABLED=true
+      - DATABASE_URL=postgresql://mwa:mwa@postgres:5432/mwa?schema=public
+      - SKIP_DEMO_DB_MIGRATIONS=true
+      - MONITORING_TEMPO_BASE_URL=http://tempo:3200
+      - CHAOS_MAX_MEMORY_BYTES=${CHAOS_MAX_MEMORY_BYTES:-268435456}
+      - CHAOS_CPU_WORKERS=${CHAOS_CPU_WORKERS:-4}
+      - CHAOS_DB_CONNECTIONS=${CHAOS_DB_CONNECTIONS:-85}
+    ports: !override
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - ./data/demo-logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
