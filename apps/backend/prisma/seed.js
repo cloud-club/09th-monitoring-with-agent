@@ -25,6 +25,7 @@ async function resetSeedScope() {
   await prisma.cartItemStockChoice.deleteMany({})
   await prisma.cartItemStock.deleteMany({})
   await prisma.orderItem.deleteMany({})
+  await prisma.orderPayment.deleteMany({})
   await prisma.paymentAttempt.deleteMany({})
   await prisma.cartItem.deleteMany({})
   await prisma.orderEntity.deleteMany({})

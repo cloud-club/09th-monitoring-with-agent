@@ -19,6 +19,29 @@ groups:
             sum by (le) (rate(mwa_http_request_duration_seconds_bucket{service="backend"}[5m]))
           )
 
+      - record: mwa:http_latency_p95_seconds:5m_by_handler
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (handler, le) (rate(mwa_http_request_duration_seconds_bucket{service="backend"}[5m]))
+          )
+
+      - record: mwa:search_latency_p95_seconds:5m
+        expr: |
+          max(mwa:http_latency_p95_seconds:5m_by_handler{handler="/api/search"}) or on() vector(0)
+
+      - record: mwa:cart_add_latency_p95_seconds:5m
+        expr: |
+          max(mwa:http_latency_p95_seconds:5m_by_handler{handler="/api/cart/items"}) or on() vector(0)
+
+      - record: mwa:order_create_latency_p95_seconds:5m
+        expr: |
+          max(mwa:http_latency_p95_seconds:5m_by_handler{handler="/api/orders"}) or on() vector(0)
+
+      - record: mwa:payment_attempt_latency_p95_seconds:5m
+        expr: |
+          max(mwa:http_latency_p95_seconds:5m_by_handler{handler="/api/orders/:orderId/payment-attempts"}) or on() vector(0)
+
       - record: mwa:apdex_score:5m
         expr: |
           (
@@ -211,11 +234,15 @@ groups:
 
       - record: mwa:thread_pool_saturation:5m
         expr: |
-          vector(0)
+          (
+            avg_over_time(mwa_chaos_active_workers[5m])
+            /
+            clamp_min(max_over_time(mwa_chaos_active_workers[5m]) + max_over_time(mwa_chaos_queue_backlog[5m]), 1)
+          ) or on() vector(0)
 
       - record: mwa:worker_queue_lag:5m
         expr: |
-          vector(0)
+          max_over_time(mwa_chaos_queue_oldest_age_seconds[5m]) or on() vector(0)
 
       - record: mwa:payment_processing_latency_p95_seconds:5m
         expr: |
@@ -240,7 +267,18 @@ groups:
 
       - record: mwa:estimated_revenue_loss_per_hour:5m
         expr: |
-          vector(0)
+          clamp_min(
+            0
+            -
+            (
+              (mwa:conversion_delta_vs_baseline:5m or on() vector(0))
+              *
+              (sum(rate(mwa_order_create_total[5m])) * 3600 or on() vector(0))
+              *
+              (mwa_average_order_value_won or on() vector(0))
+            ),
+            0
+          )
 
       - record: mwa:backend_restart_count:24h
         expr: |

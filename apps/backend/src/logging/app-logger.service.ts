@@ -27,6 +27,7 @@ type StructuredLogRecord = {
 	readonly method: string;
 	readonly result: string;
 	readonly user_role?: string;
+	readonly customer_id?: string;
 	readonly event_name?: string;
 	readonly error_code?: string | null;
 	readonly log_context?: string;
@@ -163,6 +164,7 @@ export class AppLoggerService implements LoggerService {
 			method: input.request.method,
 			result: input.result,
 			user_role: telemetry.userRole,
+			customer_id: telemetry.customerId ?? '',
 			event_name: input.eventName,
 			error_code: input.errorCode ?? null,
 			...(input.fields ?? {}),
@@ -183,6 +185,7 @@ export class AppLoggerService implements LoggerService {
 			method: input.request.method,
 			result: input.result,
 			user_role: telemetry.userRole,
+			customer_id: telemetry.customerId ?? '',
 			error_code: input.errorCode ?? null,
 			...(input.fields ?? {}),
 		});

@@ -115,7 +115,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "Container CPU Usage",
-      "description": "역할: 컨테이너별 CPU. 왜 보는가: 특정 서비스 과부하 분리. 다음 판단: 특정 컨테이너 집중 시 Developer 이동.",
+      "description": "역할: 컨테이너별 CPU. 왜 보는가: 특정 서비스 과부하 분리. 다음 판단: 특정 컨테이너 집중 시 Developer 이동. Docker Desktop에서는 컨테이너별 라벨이 비면 host-root fallback으로 표시하고, Ubuntu/Docker Engine에서는 컨테이너 단위가 기대값.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -146,8 +146,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(container_cpu_usage_seconds_total{image!=\"\",container!=\"\"}[5m])) by (name)",
-          "legendFormat": "{{name}}",
+          "expr": "sum by (image) (rate(container_cpu_usage_seconds_total{id=~\"(/docker/.*|/system.slice/docker-.*[.]scope)\",id!~\".*buildkit.*\",image!=\"\"}[5m])) or label_replace(rate(container_cpu_usage_seconds_total{id=\"/\"}[5m]), \"image\", \"host-root\", \"id\", \".*\")",
+          "legendFormat": "{{image}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -159,7 +159,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "Container CPU Throttling",
-      "description": "역할: CPU 제한 스로틀링 추이. 왜 보는가: 사용률만으로 보이지 않는 성능 저하 탐지. 다음 판단: 증가 시 리소스 제한 재검토.",
+      "description": "역할: CPU 제한 스로틀링 추이. 왜 보는가: 사용률만으로 보이지 않는 성능 저하 탐지. 다음 판단: 증가 시 리소스 제한 재검토. Docker Desktop에서는 컨테이너별 라벨이 비면 host-root fallback으로 표시하고, Ubuntu/Docker Engine에서는 컨테이너 단위가 기대값.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -190,8 +190,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(container_cpu_cfs_throttled_seconds_total{image!=\"\",container!=\"\"}[5m])) by (name)",
-          "legendFormat": "{{name}}",
+          "expr": "(sum by (image) (rate(container_cpu_cfs_throttled_seconds_total{id=~\"(/docker/.*|/system.slice/docker-.*[.]scope)\",id!~\".*buildkit.*\",image!=\"\"}[5m])) or label_replace(rate(container_cpu_cfs_throttled_seconds_total{id=\"/\"}[5m]), \"image\", \"host-root\", \"id\", \".*\")) or label_replace(absent(container_cpu_cfs_throttled_seconds_total) * 0, \"image\", \"host-root\", \"__name__\", \".*\")",
+          "legendFormat": "{{image}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -203,7 +203,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Container Memory Usage / Limit %",
-      "description": "역할: 컨테이너 메모리 limit 대비 사용률. 왜 보는가: 절대 바이트가 아니라 OOM/GC 위험도를 한계 대비로 판단. 다음 판단: 한계 근접 시 restart/OOM 로그 확인.",
+      "description": "역할: 컨테이너 메모리 limit 대비 사용률. 왜 보는가: 절대 바이트가 아니라 OOM/GC 위험도를 한계 대비로 판단. 다음 판단: 한계 근접 시 restart/OOM 로그 확인. Docker Desktop에서는 컨테이너별 라벨이 비면 host-root fallback으로 표시하고, Ubuntu/Docker Engine에서는 컨테이너 단위가 기대값.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -235,8 +235,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "100 * sum(container_memory_working_set_bytes{image!=\"\",container!=\"\"}) by (name) / clamp_min(sum(container_spec_memory_limit_bytes{image!=\"\",container!=\"\"}) by (name), 1)",
-          "legendFormat": "{{name}}",
+          "expr": "(100 * sum by (image) (container_memory_working_set_bytes{id=~\"(/docker/.*|/system.slice/docker-.*[.]scope)\",id!~\".*buildkit.*\",image!=\"\"}) / clamp_min(sum by (image) (container_spec_memory_limit_bytes{id=~\"(/docker/.*|/system.slice/docker-.*[.]scope)\",id!~\".*buildkit.*\",image!=\"\"}), 1)) or (100 * label_replace(container_memory_working_set_bytes{id=\"/\"}, \"image\", \"host-root\", \"id\", \".*\") / on(instance, job, image) clamp_min(label_replace(machine_memory_bytes{job=\"cadvisor\"}, \"image\", \"host-root\", \"job\", \".*\"), 1))",
+          "legendFormat": "{{image}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"

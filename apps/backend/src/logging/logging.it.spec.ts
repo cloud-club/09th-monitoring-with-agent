@@ -189,6 +189,7 @@ describe('structured logging integration behavior', () => {
 			expect(record.endpoint).toEqual(expect.any(String));
 			expect(record.method).toEqual(expect.any(String));
 			expect(record.result).toEqual(expect.any(String));
+			expect(record.customer_id).toEqual(expect.any(String));
 		}
 
 		expect(heartbeatEvents.length).toBeGreaterThanOrEqual(1);
@@ -202,6 +203,8 @@ describe('structured logging integration behavior', () => {
 		}
 
 		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'product.detail_viewed')?.product_id).toBe(NOTEBOOK_PRODUCT);
+		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'search.executed')?.customer_id).toBe('');
+		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'cart.item_added')?.customer_id).toBe(BUYER_ONE);
 		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'cart.item_added')?.variant_id).toBe(NOTEBOOK_VARIANT);
 		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'order.created')?.cart_id).toEqual(expect.any(String));
 		expect(requestDomainEvents.find((record: LogRecord) => record.event_name === 'payment.succeeded')?.payment_id).toEqual(expect.any(String));

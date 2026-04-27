@@ -31,6 +31,12 @@ groups:
         labels:
           severity: warning
 
+      - alert: SearchLatencySLOViolation
+        expr: mwa:search_latency_p95_seconds:5m > 0.5
+        for: 5m
+        labels:
+          severity: warning
+
       - alert: OrderCreateFailures
         expr: sum(increase(mwa_order_create_total{result!="success"}[5m])) > 5
         for: 5m

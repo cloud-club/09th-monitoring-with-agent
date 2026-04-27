@@ -136,8 +136,8 @@
     {
       "id": 4,
       "type": "table",
-      "title": "Failed Request Table",
-      "description": "역할: 실패 요청 목록(endpoint/status/duration/trace). 왜 보는가: 어떤 요청이 언제 실패했는지 확인. 다음 판단: trace_id 클릭 후 Trace-selected Logs 자동 필터링.",
+      "title": "5xx Failed Request Table",
+      "description": "역할: 5xx 실패 요청 목록(endpoint/status/duration/trace). 왜 보는가: 서버 오류 요청이 언제 실패했는지 확인. 다음 판단: trace_id 클릭 후 Trace-selected Logs 자동 필터링. 404/검증 실패 등 error_code 기반 실패는 Error Code Stream과 Trace-selected Logs에서 확인.",
       "datasource": {
         "type": "loki",
         "uid": "loki"
@@ -556,7 +556,7 @@
       "id": 10,
       "type": "logs",
       "title": "Error Code Stream",
-      "description": "역할: 시간대별 오류 코드 흐름. 왜 보는가: 장애 전개 패턴과 변화 시점 확인. 다음 판단: 배포/트래픽/인프라 이벤트와 비교.",
+      "description": "역할: 시간대별 오류 코드 흐름. 왜 보는가: 5xx가 아닌 404/검증 실패까지 포함해 장애 전개 패턴과 변화 시점 확인. 다음 판단: 배포/트래픽/인프라 이벤트와 비교하고 trace_id를 Trace-selected Logs에 입력.",
       "datasource": {
         "type": "loki",
         "uid": "loki"
@@ -583,6 +583,76 @@
           }
         }
       ]
+    },
+    {
+      "id": 11,
+      "title": "HTTP 4xx Volume by Endpoint",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 46,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, sum(increase(mwa_http_requests_total{service=\"backend\",status_code=~\"4..\"}[5m])) by (handler))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "format": "table",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 12,
+      "title": "Endpoint p95 by Handler",
+      "type": "table",
+      "gridPos": {
+        "x": 12,
+        "y": 46,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, mwa:http_latency_p95_seconds:5m_by_handler)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "format": "table",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
     }
   ],
   "refresh": "30s",
