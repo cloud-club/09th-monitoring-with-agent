@@ -12,6 +12,9 @@ type PaymentProcessingLatencyInput = {
 	readonly durationSeconds: number;
 };
 
+type EmailMetricResult = 'failure' | 'success';
+type LlmDiagnosisResult = 'fallback' | 'skipped' | 'success';
+
 type SearchRequestResult = 'success' | 'validation_error' | 'zero_result';
 type CartAddResult = 'success' | 'validation_error' | 'conflict';
 type OrderCreateResult = 'success' | 'conflict' | 'error';
@@ -80,6 +83,46 @@ const paymentProcessingLatencySeconds = new Histogram({
 	registers: [metricsRegistry],
 });
 
+const emailRenderTotal = new Counter({
+	name: 'mwa_email_render_total',
+	help: 'Total incident email render attempts by result',
+	labelNames: ['result'],
+	registers: [metricsRegistry],
+});
+
+const emailSendTotal = new Counter({
+	name: 'mwa_email_send_total',
+	help: 'Total incident email send attempts by result',
+	labelNames: ['result'],
+	registers: [metricsRegistry],
+});
+
+const emailDedupSuppressedTotal = new Counter({
+	name: 'mwa_email_dedup_suppressed_total',
+	help: 'Total incident emails suppressed by dedup policy',
+	registers: [metricsRegistry],
+});
+
+const emailFallbackTotal = new Counter({
+	name: 'mwa_email_fallback_total',
+	help: 'Total fallback incident email reports generated',
+	registers: [metricsRegistry],
+});
+
+const llmDiagnosisTotal = new Counter({
+	name: 'mwa_aiops_llm_diagnosis_total',
+	help: 'Total local LLM diagnosis outcomes by result',
+	labelNames: ['result'],
+	registers: [metricsRegistry],
+});
+
+const incidentToEmailLatencySeconds = new Histogram({
+	name: 'mwa_incident_to_email_latency_seconds',
+	help: 'Latency in seconds from incident notification request to email delivery result',
+	buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30],
+	registers: [metricsRegistry],
+});
+
 export function refreshLogHeartbeatMetric(timestampMs: number = Date.now()): void {
 	logHeartbeatUnixtimeSeconds.set({ service: BACKEND_SERVICE }, timestampMs / 1000);
 }
@@ -125,6 +168,30 @@ export function observePaymentProcessingLatency(input: PaymentProcessingLatencyI
 		},
 		input.durationSeconds,
 	);
+}
+
+export function incrementEmailRender(result: EmailMetricResult): void {
+	emailRenderTotal.inc({ result });
+}
+
+export function incrementEmailSend(result: EmailMetricResult): void {
+	emailSendTotal.inc({ result });
+}
+
+export function incrementEmailDedupSuppressed(): void {
+	emailDedupSuppressedTotal.inc();
+}
+
+export function incrementEmailFallback(): void {
+	emailFallbackTotal.inc();
+}
+
+export function incrementLlmDiagnosis(result: LlmDiagnosisResult): void {
+	llmDiagnosisTotal.inc({ result });
+}
+
+export function observeIncidentToEmailLatency(durationSeconds: number): void {
+	incidentToEmailLatencySeconds.observe(durationSeconds);
 }
 
 export const metricsContentType = metricsRegistry.contentType;

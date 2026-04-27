@@ -48,3 +48,28 @@ model AlertRecord {
   @@index([sourceType, sourceRef])
   @@map("alert_records")
 }
+
+model EmailDeliveryRecord {
+  id              String   @id @default(uuid()) @db.Uuid
+  incidentId      String   @map("incident_id")
+  incidentType    String   @map("incident_type")
+  fingerprint     String
+  dedupKey        String   @map("dedup_key")
+  severity        String
+  serviceName     String   @map("service_name")
+  subject         String?
+  recipients      Json
+  status          String
+  failureReason   String?  @map("failure_reason")
+  dedupSuppressed Boolean  @default(false) @map("dedup_suppressed")
+  llmUsed         Boolean  @default(false) @map("llm_used")
+  fallbackUsed    Boolean  @default(false) @map("fallback_used")
+  createdAt       DateTime @default(now()) @map("created_at")
+  sentAt          DateTime? @map("sent_at")
+
+  @@index([fingerprint, dedupKey])
+  @@index([incidentId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("email_delivery_records")
+}

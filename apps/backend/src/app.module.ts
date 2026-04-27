@@ -8,6 +8,7 @@ import { HealthModule } from './health/health.module';
 import { PaginationQueryPipe } from './http/pipes/pagination-query.pipe';
 import { RequestLoggingMiddleware } from './logging/request-logging.middleware';
 import { HttpMetricsMiddleware } from './metrics/http-metrics.middleware';
+import { EmailNotifierModule } from './notification/email-notifier.module';
 import { ObservabilityModule } from './observability/observability.module';
 import { OrderModule } from './order/order.module';
 import { PaymentModule } from './payment/payment.module';
@@ -27,6 +28,7 @@ import { HttpTraceMiddleware } from './telemetry/http-trace.middleware';
 		HealthModule,
 		ContractModule,
 		DatabaseModule,
+		EmailNotifierModule,
 		CatalogModule,
 		SearchModule,
 		RecommendationModule,

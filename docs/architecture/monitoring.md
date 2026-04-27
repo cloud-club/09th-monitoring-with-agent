@@ -25,6 +25,17 @@ Backend 내부의 observability 코드는 signal을 만들고, `monitoring/` sta
 - Promtail: backend/demo log ingestion
 - Grafana: dashboard, alerting, drilldown surface
 
+## Notification Layer
+
+Email Notifier is the first notification channel implementation. It lives in the backend `notification` module and receives an incident packet plus optional diagnosis result.
+
+- Local Qwen LLM enrichment is optional and uses `http://127.0.0.1:1234` by default.
+- SMTP delivery is disabled by default and falls back to no-op transport in local/CI.
+- LLM failure, partial evidence, or HTML rendering failure must still produce a plain operational fallback report.
+- Delivery, failure, dedup, fallback, and LLM outcomes are exported as Prometheus metrics.
+
+The contract is documented in `docs/contracts/email-notifier.md`.
+
 ## Dashboard Routing
 
 운영자가 보는 순서는 다음을 기본값으로 둡니다.
