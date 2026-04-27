@@ -77,11 +77,17 @@ Enable local LLM enrichment:
 AIOPS_LLM_ENABLED=true
 AIOPS_LLM_BASE_URL=http://127.0.0.1:1234
 AIOPS_LLM_MODEL=qwen/qwen3.6-27b
+AIOPS_LLM_TIMEOUT_MS=180000
+AIOPS_LLM_MAX_TOKENS=1000
+AIOPS_LLM_TEMPERATURE=0.2
+AIOPS_LLM_REASONING_EFFORT=none
 AIOPS_EVIDENCE_COLLECTION_ENABLED=true
 PROMETHEUS_BASE_URL=http://127.0.0.1:9090
 LOKI_BASE_URL=http://127.0.0.1:3100
 TEMPO_BASE_URL=http://127.0.0.1:3200
 ```
+
+For Qwen 3.6 27B, keep `AIOPS_LLM_REASONING_EFFORT=none`. If the local server returns only reasoning text or the email falls back with no LLM diagnosis content, confirm this setting first.
 
 Enable SMTP only when a local test mailbox or real SMTP server is configured:
 

@@ -51,6 +51,19 @@ describe('local LLM diagnosis parsing', () => {
 		}))).toThrow(/confirmed evidence/);
 	});
 
+	it('uses benchmarked Qwen defaults unless env overrides them', () => {
+		expect(getEmailNotifierConfigFromEnv({}).llm).toMatchObject({
+			timeoutMs: 180000,
+			maxTokens: 1000,
+			temperature: 0.2,
+			reasoningEffort: 'none',
+		});
+
+		expect(getEmailNotifierConfigFromEnv({
+			AIOPS_LLM_REASONING_EFFORT: '',
+		}).llm.reasoningEffort).toBeUndefined();
+	});
+
 	it('calls an OpenAI-compatible local server', async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(JSON.stringify({
@@ -111,6 +124,7 @@ describe('local LLM diagnosis parsing', () => {
 
 		const [, requestInit] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
 		const request = JSON.parse(String(requestInit.body)) as {
+			readonly reasoning_effort?: string;
 			readonly messages: Array<{ readonly role: string; readonly content: string }>;
 		};
 		const userPayload = JSON.parse(request.messages[1]?.content ?? '{}') as {
@@ -124,9 +138,51 @@ describe('local LLM diagnosis parsing', () => {
 			'http://127.0.0.1:1234/v1/chat/completions',
 			expect.objectContaining({ method: 'POST' }),
 		);
+		expect(request.reasoning_effort).toBe('none');
 		expect(userPayload.evidence?.keyMetrics).toBeDefined();
 		expect(userPayload.evidence?.rootCauseEvidence).toBeDefined();
 		expect(diagnosis.emailSubject).toBe('[HIGH] checkout - 지연 증가');
 		expect(diagnosis.incidentTypeKo).toBe('체크아웃 응답 지연 급증');
+	});
+
+	it('omits reasoning_effort when env is blank', async () => {
+		const fetchMock = vi.fn(async () => {
+			return new Response(JSON.stringify({
+				choices: [{
+					message: {
+						content: JSON.stringify({
+							summary: '결제 실패율이 증가했습니다.',
+							customer_impact: '일부 사용자가 결제 실패를 경험할 수 있습니다.',
+							confirmed_evidence: ['payment failure ratio > 10%'],
+							likely_causes: [{ cause: 'PG timeout', confidence: 'medium', reason: '로그와 지표가 PG 호출 지연을 함께 지목합니다.' }],
+							immediate_actions: ['PG 상태를 확인합니다.'],
+							followup_checks: ['최근 배포를 확인합니다.'],
+							final_severity: 'high',
+						}),
+					},
+				}],
+			}), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const client = new LocalLlmDiagnosisClient(getEmailNotifierConfigFromEnv({
+			AIOPS_LLM_REASONING_EFFORT: '',
+		}));
+
+		await client.generateDiagnosis({
+			incident: {
+				incidentId: 'inc-2',
+				incidentType: 'payment_failure',
+				severity: 'high',
+				serviceName: 'payment',
+				detectedAt: '2026-04-27T00:00:00.000Z',
+				fingerprint: 'fp-2',
+				source: 'test',
+			},
+		});
+
+		const [, requestInit] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
+		const request = JSON.parse(String(requestInit.body)) as Record<string, unknown>;
+		expect(request).not.toHaveProperty('reasoning_effort');
 	});
 });

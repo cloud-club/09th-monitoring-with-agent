@@ -166,27 +166,29 @@ export class LocalLlmDiagnosisClient {
 	public async generateDiagnosis(input: NotifyIncidentInput): Promise<DiagnosisResult> {
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), this.config.llm.timeoutMs);
+		const requestBody = {
+			model: this.config.llm.model,
+			temperature: this.config.llm.temperature,
+			max_tokens: this.config.llm.maxTokens,
+			...(this.config.llm.reasoningEffort === undefined ? {} : { reasoning_effort: this.config.llm.reasoningEffort }),
+			messages: [
+				{ role: 'system', content: DIAGNOSIS_SYSTEM_PROMPT },
+				{
+					role: 'user',
+					content: JSON.stringify({
+						incident: input.incident,
+						evidence: input.evidence ?? {},
+						links: input.links ?? {},
+					}),
+				},
+			],
+		};
 
 		try {
 			const response = await fetch(`${this.config.llm.baseUrl.replace(/\/$/, '')}/v1/chat/completions`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					model: this.config.llm.model,
-					temperature: this.config.llm.temperature,
-					max_tokens: this.config.llm.maxTokens,
-					messages: [
-						{ role: 'system', content: DIAGNOSIS_SYSTEM_PROMPT },
-						{
-							role: 'user',
-							content: JSON.stringify({
-								incident: input.incident,
-								evidence: input.evidence ?? {},
-								links: input.links ?? {},
-							}),
-						},
-					],
-				}),
+				body: JSON.stringify(requestBody),
 				signal: controller.signal,
 			});
 

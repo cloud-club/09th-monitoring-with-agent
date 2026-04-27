@@ -31,12 +31,13 @@ Default local LLM settings:
 AIOPS_LLM_ENABLED=false
 AIOPS_LLM_BASE_URL=http://127.0.0.1:1234
 AIOPS_LLM_MODEL=qwen/qwen3.6-27b
-AIOPS_LLM_TIMEOUT_MS=15000
-AIOPS_LLM_MAX_TOKENS=1500
+AIOPS_LLM_TIMEOUT_MS=180000
+AIOPS_LLM_MAX_TOKENS=1000
 AIOPS_LLM_TEMPERATURE=0.2
+AIOPS_LLM_REASONING_EFFORT=none
 ```
 
-The server must expose an OpenAI-compatible `POST /v1/chat/completions` API. Qwen output is parsed as strict JSON. `<think>...</think>` blocks and text outside the JSON object are stripped before parsing. If parsing fails, the notifier sends a fallback report.
+The server must expose an OpenAI-compatible `POST /v1/chat/completions` API. Qwen output is parsed as strict JSON. `<think>...</think>` blocks and text outside the JSON object are stripped before parsing. `AIOPS_LLM_REASONING_EFFORT=none` is recommended for Qwen 3.6 27B because otherwise the model may spend the full token budget on reasoning and return no JSON content. If parsing fails, the notifier sends a fallback report.
 
 The diagnosis JSON may include `incident_type_ko` and `likely_causes[].reason`. If `incident_type_ko` is missing, the renderer falls back to the MVP incident-type mapping.
 

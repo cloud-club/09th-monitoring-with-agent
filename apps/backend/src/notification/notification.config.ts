@@ -18,6 +18,7 @@ export type LocalLlmConfig = {
 	readonly timeoutMs: number;
 	readonly maxTokens: number;
 	readonly temperature: number;
+	readonly reasoningEffort?: string;
 };
 
 export type EvidenceCollectionConfig = {
@@ -76,6 +77,15 @@ function parseList(value: string | undefined, defaultValue: readonly string[]): 
 		.filter(entry => entry.length > 0);
 }
 
+function parseOptionalString(value: string | undefined, defaultValue?: string): string | undefined {
+	if (value === undefined) {
+		return defaultValue;
+	}
+
+	const trimmed = value.trim();
+	return trimmed.length === 0 ? undefined : trimmed;
+}
+
 function parseSeverity(value: string | undefined): IncidentSeverity {
 	const normalized = value?.trim().toLowerCase();
 	if (
@@ -117,9 +127,10 @@ export function getEmailNotifierConfigFromEnv(env: Env = process.env): EmailNoti
 			enabled: parseBoolean(env.AIOPS_LLM_ENABLED, false),
 			baseUrl: env.AIOPS_LLM_BASE_URL ?? 'http://127.0.0.1:1234',
 			model: env.AIOPS_LLM_MODEL ?? 'qwen/qwen3.6-27b',
-			timeoutMs: parseNumber(env.AIOPS_LLM_TIMEOUT_MS, 15000),
-			maxTokens: parseNumber(env.AIOPS_LLM_MAX_TOKENS, 1500),
+			timeoutMs: parseNumber(env.AIOPS_LLM_TIMEOUT_MS, 180000),
+			maxTokens: parseNumber(env.AIOPS_LLM_MAX_TOKENS, 1000),
 			temperature: parseNumber(env.AIOPS_LLM_TEMPERATURE, 0.2),
+			reasoningEffort: parseOptionalString(env.AIOPS_LLM_REASONING_EFFORT, 'none'),
 		},
 		evidence: {
 			enabled: parseBoolean(env.AIOPS_EVIDENCE_COLLECTION_ENABLED, true),
