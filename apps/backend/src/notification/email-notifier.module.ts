@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 
 import { DatabaseModule } from '../database/database.module';
 
+import { AlertmanagerNotificationQueueService } from './alertmanager-notification-queue.service';
+import { AlertmanagerWebhookController } from './alertmanager-webhook.controller';
+import { AlertmanagerWebhookMapper } from './alertmanager-webhook.mapper';
 import { EmailDedupService } from './email-dedup.service';
 import { EmailDeliveryRepository } from './email-delivery.repository';
 import { EmailNotificationPolicyService } from './email-notification-policy.service';
@@ -22,6 +25,7 @@ import { SmtpEmailTransport } from './smtp-email.transport';
 
 @Module({
 	imports: [DatabaseModule],
+	controllers: [AlertmanagerWebhookController],
 	providers: [
 		{
 			provide: EMAIL_NOTIFIER_CONFIG,
@@ -38,6 +42,8 @@ import { SmtpEmailTransport } from './smtp-email.transport';
 		EmailDeliveryRepository,
 		EmailNotificationPolicyService,
 		EmailNotifierService,
+		AlertmanagerNotificationQueueService,
+		AlertmanagerWebhookMapper,
 		IncidentEvidenceCollector,
 		IncidentDiagnosisService,
 		IncidentEmailRenderer,

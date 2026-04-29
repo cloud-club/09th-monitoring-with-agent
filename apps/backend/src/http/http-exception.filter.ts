@@ -34,6 +34,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
 				response.status(statusCode).json(fail(ERROR_CODES.BAD_REQUEST, 'Bad request'));
 				return;
 			}
+
+			if (statusCode === HttpStatus.UNAUTHORIZED) {
+				response.locals.log_error_code = ERROR_CODES.UNAUTHORIZED;
+				response.status(statusCode).json(fail(ERROR_CODES.UNAUTHORIZED, 'Unauthorized'));
+				return;
+			}
 		}
 
 		response.locals.log_error_code = ERROR_CODES.INTERNAL_SERVER_ERROR;

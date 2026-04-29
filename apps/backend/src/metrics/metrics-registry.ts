@@ -14,6 +14,8 @@ type PaymentProcessingLatencyInput = {
 
 type EmailMetricResult = 'failure' | 'success';
 type LlmDiagnosisResult = 'fallback' | 'skipped' | 'success';
+type AlertmanagerWebhookResult = 'accepted' | 'ignored' | 'rejected';
+type AlertmanagerQueueResult = 'dropped' | 'enqueued' | 'failed' | 'processed';
 
 type SearchRequestResult = 'success' | 'validation_error' | 'zero_result';
 type CartAddResult = 'success' | 'validation_error' | 'conflict';
@@ -123,6 +125,20 @@ const incidentToEmailLatencySeconds = new Histogram({
 	registers: [metricsRegistry],
 });
 
+const alertmanagerWebhookTotal = new Counter({
+	name: 'mwa_alertmanager_webhook_total',
+	help: 'Total Alertmanager webhook requests by result',
+	labelNames: ['result'],
+	registers: [metricsRegistry],
+});
+
+const alertmanagerQueueTotal = new Counter({
+	name: 'mwa_alertmanager_queue_total',
+	help: 'Total Alertmanager incident queue events by result',
+	labelNames: ['result'],
+	registers: [metricsRegistry],
+});
+
 export function refreshLogHeartbeatMetric(timestampMs: number = Date.now()): void {
 	logHeartbeatUnixtimeSeconds.set({ service: BACKEND_SERVICE }, timestampMs / 1000);
 }
@@ -192,6 +208,14 @@ export function incrementLlmDiagnosis(result: LlmDiagnosisResult): void {
 
 export function observeIncidentToEmailLatency(durationSeconds: number): void {
 	incidentToEmailLatencySeconds.observe(durationSeconds);
+}
+
+export function incrementAlertmanagerWebhook(result: AlertmanagerWebhookResult): void {
+	alertmanagerWebhookTotal.inc({ result });
+}
+
+export function incrementAlertmanagerQueue(result: AlertmanagerQueueResult): void {
+	alertmanagerQueueTotal.inc({ result });
 }
 
 export const metricsContentType = metricsRegistry.contentType;

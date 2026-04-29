@@ -31,6 +31,12 @@ export type EvidenceCollectionConfig = {
 	readonly maxLogLines: number;
 };
 
+export type AlertmanagerWebhookConfig = {
+	readonly webhookToken?: string;
+	readonly queueMaxSize: number;
+	readonly supportedIncidentTypes: readonly string[];
+};
+
 export type EmailNotifierConfig = {
 	readonly enabled: boolean;
 	readonly minSeverity: IncidentSeverity;
@@ -43,6 +49,7 @@ export type EmailNotifierConfig = {
 	readonly smtp: SmtpConfig;
 	readonly llm: LocalLlmConfig;
 	readonly evidence: EvidenceCollectionConfig;
+	readonly alertmanager: AlertmanagerWebhookConfig;
 };
 
 type Env = NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -140,6 +147,11 @@ export function getEmailNotifierConfigFromEnv(env: Env = process.env): EmailNoti
 			timeoutMs: parseNumber(env.AIOPS_EVIDENCE_TIMEOUT_MS, 3000),
 			lookbackMinutes: parseNumber(env.AIOPS_EVIDENCE_LOOKBACK_MINUTES, 10),
 			maxLogLines: parseNumber(env.AIOPS_EVIDENCE_MAX_LOG_LINES, 5),
+		},
+		alertmanager: {
+			webhookToken: parseOptionalString(env.ALERTMANAGER_WEBHOOK_TOKEN),
+			queueMaxSize: parseNumber(env.ALERTMANAGER_QUEUE_MAX_SIZE, 100),
+			supportedIncidentTypes: parseList(env.ALERTMANAGER_SUPPORTED_INCIDENT_TYPES, DEFAULT_ALLOWED_INCIDENT_TYPES),
 		},
 	};
 }

@@ -19,6 +19,20 @@ services:
       - OTEL_SERVICE_NAME=mwa-backend
       - QA_SCENARIO_RESET_ENABLED=true
       - QA_FAULT_INJECTION_ENABLED=true
+      - EMAIL_NOTIFIER_ENABLED=true
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - SMTP_FROM=MWA AIOps <alerts@example.local>
+      - EMAIL_DEFAULT_RECIPIENTS=sre@example.local
+      - EMAIL_PAYMENT_RECIPIENTS=payment-team@example.local,sre@example.local
+      - EMAIL_CHECKOUT_RECIPIENTS=backend-team@example.local,sre@example.local
+      - EMAIL_MIN_SEVERITY=high
+      - PROMETHEUS_BASE_URL=http://prometheus:9090
+      - LOKI_BASE_URL=http://loki:3100
+      - TEMPO_BASE_URL=http://tempo:3200
+      - AIOPS_LLM_ENABLED=false
+      - AIOPS_LLM_BASE_URL=http://host.docker.internal:1234
+      - ALERTMANAGER_WEBHOOK_TOKEN=local-alertmanager-token
     ports:
       - "8080:8080"
     volumes:
@@ -29,6 +43,8 @@ services:
         condition: service_healthy
       tempo:
         condition: service_started
+      mailpit:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 10s
@@ -37,6 +53,8 @@ services:
       start_period: 15s
     networks:
       - loki
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   mwa-demo:
     build:
@@ -177,6 +195,33 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+
+  alertmanager:
+    container_name: mwa-alertmanager
+    image: prom/alertmanager:latest
+    volumes:
+      - ./config/alertmanager:/etc/alertmanager:ro
+    ports:
+      - "9093:9093"
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    depends_on:
+      mwa-backend:
+        condition: service_healthy
+    networks:
+      - loki
+
+  mailpit:
+    container_name: mwa-mailpit
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    restart: unless-stopped
+    networks:
+      - loki
 
   postgres-exporter:
     container_name: mwa-postgres-exporter

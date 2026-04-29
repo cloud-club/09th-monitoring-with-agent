@@ -2,9 +2,51 @@
 
 ## Purpose
 
-Email Notifier is the final delivery layer for AIOps incidents. It converts an incident packet and optional diagnosis into an operator-facing email report.
+Email Notifier is the delivery layer for AIOps incidents. It converts an incident packet and optional diagnosis into an operator-facing email report.
 
-It is not responsible for Alertmanager webhook ingestion, evidence collection, or Grafana dashboard creation.
+The local end-to-end path is:
+
+```text
+Prometheus alert rule -> Alertmanager webhook -> backend incident queue -> evidence collection -> optional local LLM diagnosis -> email report
+```
+
+Grafana remains the dashboard and drilldown surface.
+
+## Alertmanager Webhook
+
+The backend accepts Alertmanager webhook v4 payloads at:
+
+```text
+POST /internal/alertmanager/webhook
+```
+
+When `ALERTMANAGER_WEBHOOK_TOKEN` is set, the request must include:
+
+```text
+Authorization: Bearer <ALERTMANAGER_WEBHOOK_TOKEN>
+```
+
+The endpoint returns `202` immediately with:
+
+```ts
+{
+  accepted: number;
+  ignored: number;
+  queued: number;
+}
+```
+
+Only `firing` alerts are processed. `resolved` alerts and unsupported alert types are ignored for the MVP.
+
+MVP alert mapping:
+
+| Alertmanager alert | Incident type | Service |
+|---|---|---|
+| `PaymentFailureSpike` or `incident_type=payment_failure` | `payment_failure` | `payment` |
+| `CheckoutLatencySpike` or `incident_type=checkout_latency_spike` | `checkout_latency_spike` | `checkout` |
+| `APIHighErrorRate` or `incident_type=error_burst` | `error_burst` | `backend` |
+
+Alertmanager `fingerprint` is used when present. If it is missing, the backend derives a stable hash from alert labels and `startsAt`.
 
 ## Input
 
@@ -22,6 +64,8 @@ notifyIncident(input: {
 `diagnosis` is used as-is when provided. If it is missing and `AIOPS_LLM_ENABLED=true`, the notifier calls the local Qwen server.
 
 Before diagnosis resolution, incidents that pass policy and dedup are enriched with Prometheus, Loki, and Tempo evidence. Partial evidence is allowed when a source is unavailable.
+
+Alertmanager webhook processing uses an in-process queue so webhook latency is not blocked by evidence collection, LLM calls, SMTP, or delivery record writes.
 
 ## Local LLM
 
@@ -73,6 +117,9 @@ EMAIL_CHECKOUT_RECIPIENTS=backend-team@example.local,sre@example.local
 EMAIL_INFRA_RECIPIENTS=platform-team@example.local,sre@example.local
 EMAIL_DEDUP_WINDOW_MINUTES=30
 EMAIL_MIN_SEVERITY=high
+ALERTMANAGER_WEBHOOK_TOKEN=
+ALERTMANAGER_QUEUE_MAX_SIZE=100
+ALERTMANAGER_SUPPORTED_INCIDENT_TYPES=payment_failure,checkout_latency_spike,error_burst
 ```
 
 When `EMAIL_NOTIFIER_ENABLED=false`, the module uses a no-op transport so rendering, policy, dedup, and recording paths remain testable without sending real email.

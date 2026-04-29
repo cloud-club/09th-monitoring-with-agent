@@ -24,6 +24,8 @@ groups:
         for: 5m
         labels:
           severity: critical
+          service: backend
+          incident_type: error_burst
 
       - alert: APIHighLatencyP95
         expr: mwa:http_latency_p95_seconds:5m > 1
@@ -48,6 +50,19 @@ groups:
         for: 5m
         labels:
           severity: critical
+          service: payment
+          incident_type: payment_failure
+
+      - alert: CheckoutLatencySpike
+        expr: |
+          (mwa:order_create_latency_p95_seconds:5m > 1)
+          or
+          (mwa:payment_attempt_latency_p95_seconds:5m > 1)
+        for: 5m
+        labels:
+          severity: high
+          service: checkout
+          incident_type: checkout_latency_spike
 
       - alert: LowApdexScore
         expr: mwa:apdex_score:5m < 0.85

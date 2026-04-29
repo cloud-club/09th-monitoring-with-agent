@@ -61,6 +61,28 @@
 | `PaymentFailureSpike` | Prometheus | PromQL | `결제 실패율 > 10%` | `5분` | 높음 | `TBD` | 예 |
 | `RepeatedErrorCodeBurst` | Loki | LogQL | `동일 error_code burst` | `5분` | 중간 | `TBD` | 예 |
 
+### 5-1. AIOps 리포트 파이프라인
+
+MVP 알림 리포트 경로는 다음과 같다.
+
+```text
+Prometheus alert rule -> Alertmanager -> Backend webhook -> Prometheus/Loki/Tempo evidence -> Local LLM -> Email
+```
+
+- Alertmanager webhook: `POST /internal/alertmanager/webhook`
+- 인증: `ALERTMANAGER_WEBHOOK_TOKEN`이 설정되어 있으면 `Authorization: Bearer <token>` 필요
+- 로컬 SMTP sink: Mailpit `http://127.0.0.1:8025`
+- LLM: `AIOPS_LLM_ENABLED=false`가 기본값이며, 비활성/실패 시 fallback report를 발송한다.
+
+| Prometheus Alert | Backend incident type | Service | 리포트 발송 |
+|---|---|---|---|
+| `PaymentFailureSpike` | `payment_failure` | `payment` | 예 |
+| `CheckoutLatencySpike` | `checkout_latency_spike` | `checkout` | 예 |
+| `APIHighErrorRate` | `error_burst` | `backend` | 예 |
+| 그 외 alert | 미지원 | - | MVP에서는 무시 |
+
+Alertmanager `fingerprint`는 email dedup의 기본 입력으로 사용한다. fingerprint가 없으면 backend가 alert label과 `startsAt`으로 안정적인 hash를 생성한다.
+
 ### 알림 원칙
 
 - 모든 알림은 실제 행동으로 이어져야 한다.
@@ -118,6 +140,7 @@
 | `LowApdexScore` | `mwa:apdex_score:5m < 0.85` for `10m` | 체감 품질 하락 조기 감지 |
 | `SaturationWarningSummary` | `mwa:saturation_warning_score:5m > 0` for `10m` | 자원 포화 경고 집계 |
 | `BusinessImpactDegraded` | `mwa:business_impact_status:5m < 1` for `10m` | 비즈니스 영향 감지 |
+| `CheckoutLatencySpike` | 주문 생성 또는 결제 시도 p95 `> 1초` for `5m` | 체크아웃 지연 AIOps 리포트 트리거 |
 
 ## 10. 미계측 항목 처리 정책
 

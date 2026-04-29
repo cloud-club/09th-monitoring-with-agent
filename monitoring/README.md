@@ -25,6 +25,18 @@ Stop:
 - Grafana: `http://127.0.0.1:3000`
 - Backend: `http://127.0.0.1:8080`
 - Demo/QA web: `http://127.0.0.1:8081/qa/scenarios`
+- Alertmanager: `http://127.0.0.1:9093`
+- Mailpit: `http://127.0.0.1:8025`
+
+## AIOps Email Pipeline
+
+The local stack wires Prometheus alerts to Alertmanager, then to the backend webhook:
+
+```text
+Prometheus -> Alertmanager -> /internal/alertmanager/webhook -> Email Notifier -> Mailpit
+```
+
+The compose default enables email delivery to Mailpit and keeps local LLM diagnosis disabled. Set `AIOPS_LLM_ENABLED=true` for the backend and run an OpenAI-compatible local model at `http://host.docker.internal:1234` to include LLM diagnosis; otherwise fallback reports still send.
 
 ## Documentation
 
